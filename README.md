@@ -12,6 +12,7 @@ A VS Code extension that acts as a local HTTP proxy between your AI coding tools
 |--------|-------------|
 | **TPT Vault** | Redacts AWS keys, Stripe tokens, GitHub PATs, JWTs, `.env` secrets, and custom patterns before any LLM sees them |
 | **TPT Smart Context** | Replaces large file contents in tool calls with compact AST outlines — dramatically reduces tokens sent per request |
+| **TPT Weave** | Routes Rust repository context through the [tpt-weave](https://github.com/tpt-solutions/tpt-weave) index (`tpt-weave adopt`) — exact signatures/skeletons from one shared index instead of re-parsing in the proxy |
 | **TPT Token Shield** | Caches identical prompts locally (SHA-256 hash match) — zero cost on repeated queries |
 | **TPT Memory Weaver** | Automatically summarises conversation history when it grows too large — keeps context costs in check |
 | **TPT Router** | Rewrites the target model and provider based on configurable heuristics — send simple tasks to cheap local models |
@@ -105,6 +106,16 @@ All settings are under the `tpt.*` namespace in VS Code settings (`Ctrl+,` → s
 |---------|---------|-------------|
 | `tpt.smartContext.enabled` | `true` | Enable AST outline extraction |
 | `tpt.smartContext.maxFileSize` | `512000` | Files larger than this (bytes) are outlined |
+
+### TPT Weave
+
+For repositories indexed with [`tpt-weave adopt`](https://github.com/tpt-solutions/tpt-weave) (Rust workspaces), tool results for `.rs` files are replaced by representations from the shared index instead of re-parsing here. Requires the `tpt-weave` CLI on PATH (or set `tpt.weave.cliPath`).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `tpt.weave.enabled` | `false` | Route Rust repository context through tpt-weave when the workspace is indexed |
+| `tpt.weave.cliPath` | `tpt-weave` | Path to the tpt-weave CLI binary |
+| `tpt.weave.level` | `2` | Representation level: `2` signatures (compact), `3` skeleton (full signatures + types, more tokens) |
 
 ### TPT Token Shield
 

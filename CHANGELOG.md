@@ -10,6 +10,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- **TPT Weave (tpt-weave integration)** — for workspaces indexed with `tpt-weave adopt`, Rust tool-result content is replaced by the repository's indexed signatures/skeletons (`tpt.weave.enabled`, level via `tpt.weave.level`) instead of re-parsing sources in the proxy; falls back to tree-sitter/regex outlining on any miss. Dashboard gains a "Repository Context (tpt-weave)" panel (raw vs delivered tokens, reduction, cache hit rate, session replacements).
 - **Live OpenRouter pricing** — fetches `/api/v1/models` once per day, cached in `.tpt/pricing.json`. Falls back to a built-in table covering all major providers when offline.
 - **Daily cost budget alert** — `tpt.costBudget.dailyLimitUsd` setting; warning notification fires once per day when spending exceeds the limit.
 - **Per-model cost breakdown** — dashboard now shows a "Cost by Model" table and a budget progress bar.

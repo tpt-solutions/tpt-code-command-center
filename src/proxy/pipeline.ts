@@ -1,8 +1,9 @@
-import { getConfig } from '../utils/config';
+import { getConfig, workspaceRoots } from '../utils/config';
 import { log } from '../utils/logger';
 import { AnthropicRequest, OpenAIRequest, ProxyRequest } from './types';
 import { runVault } from '../modules/vault';
 import { runSmartContext } from '../modules/smartContext';
+import { createWeaveQuery } from '../modules/weave';
 import { runTokenShield } from '../modules/tokenShield';
 import { runMemoryWeaver } from '../modules/memoryWeaver';
 import { runRouter } from '../modules/router';
@@ -59,9 +60,21 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
     }
   }
 
-  // 4. Smart Context: replace file content with AST outlines in tool results
+  // 4. Smart Context: replace file content with AST outlines in tool results.
+  //    When tpt-weave is enabled and the workspace has an index, Rust files
+  //    get their skeleton from the shared index instead (spec.md §32).
   if (config.smartContext.enabled && 'messages' in body && Array.isArray(body.messages)) {
-    const result = await runSmartContext(body.messages, config.smartContext.maxFileSize);
+    const weave = config.weave.enabled
+      ? createWeaveQuery({
+          cliPath: config.weave.cliPath,
+          roots: workspaceRoots(),
+          level: config.weave.level,
+        })
+      : undefined;
+    const result = await runSmartContext(body.messages, config.smartContext.maxFileSize, weave);
+    if (result.weaveReplaced > 0) {
+      actions.push(`weave:skeleton=${result.weaveReplaced}`);
+    }
     if (result.replaced > 0) {
       body = { ...body, messages: result.messages };
       actions.push(`smartContext:replaced=${result.replaced}`);

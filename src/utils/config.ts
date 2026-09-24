@@ -32,6 +32,7 @@ export interface TptConfig {
   customApiKey: string;
   vault: { enabled: boolean; customRegex: string[] };
   smartContext: { enabled: boolean; maxFileSize: number };
+  weave: { enabled: boolean; cliPath: string; level: number };
   tokenShield: {
     enabled: boolean;
     maxCacheSizeMB: number;
@@ -90,6 +91,11 @@ export function getConfig(): TptConfig {
       enabled: c.get<boolean>('smartContext.enabled', true),
       maxFileSize: c.get<number>('smartContext.maxFileSize', 512000),
     },
+    weave: {
+      enabled: c.get<boolean>('weave.enabled', false),
+      cliPath: c.get<string>('weave.cliPath', 'tpt-weave'),
+      level: c.get<number>('weave.level', 2),
+    },
     tokenShield: {
       enabled: c.get<boolean>('tokenShield.enabled', true),
       maxCacheSizeMB: c.get<number>('tokenShield.maxCacheSizeMB', 256),
@@ -132,6 +138,10 @@ export function getConfig(): TptConfig {
       quotaPollingIntervalSec: c.get<number>('costBudget.quotaPollingIntervalSec', 180),
     },
   };
+}
+
+export function workspaceRoots(): string[] {
+  return (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
 }
 
 // Blocks SSRF attacks via user-configurable URL fields.

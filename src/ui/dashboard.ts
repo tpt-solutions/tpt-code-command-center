@@ -1,8 +1,9 @@
 import * as vscode from 'vscode';
 import { getStats, getModelBreakdown, getMonthlyStats, LedgerStats, ModelStat, MonthStat } from '../ledger/ledger';
 import { getProxyUrl } from '../proxy/server';
-import { getConfig, resolveUpstreamUrl } from '../utils/config';
+import { getConfig, resolveUpstreamUrl, workspaceRoots } from '../utils/config';
 import { getQuotaSnapshot, QuotaSnapshot } from '../modules/quotaTracker';
+import { weaveDashboardSnapshot, WeaveRepoStats, WeaveSessionStats } from '../modules/weave';
 
 let panel: vscode.WebviewPanel | undefined;
 
@@ -41,7 +42,10 @@ export async function refreshDashboard(): Promise<void> {
   const config = getConfig();
   const proxyUrl = getProxyUrl();
   const quota = getQuotaSnapshot();
-  panel.webview.html = buildHtml(stats, modelBreakdown, monthlyStats, config, proxyUrl, quota);
+  const weave = config.weave.enabled
+    ? await weaveDashboardSnapshot(config.weave.cliPath, workspaceRoots(), config.weave.level).catch(() => undefined)
+    : undefined;
+  panel.webview.html = buildHtml(stats, modelBreakdown, monthlyStats, config, proxyUrl, quota, weave);
 }
 
 function buildHtml(
@@ -51,12 +55,14 @@ function buildHtml(
   config: ReturnType<typeof getConfig>,
   proxyUrl: string | undefined,
   quota: QuotaSnapshot | undefined,
+  weave: { repo: WeaveRepoStats; session: WeaveSessionStats } | undefined,
 ): string {
   const nonce = Math.random().toString(36).substring(2);
 
   const modules = [
     { name: 'Vault', enabled: config.vault.enabled, icon: '🛡️' },
     { name: 'Smart Context', enabled: config.smartContext.enabled, icon: '🌳' },
+    { name: 'Weave (tpt-weave)', enabled: config.weave.enabled, icon: '🕸️' },
     { name: 'Token Shield', enabled: config.tokenShield.enabled, icon: '💾' },
     { name: 'Memory Weaver', enabled: config.memoryWeaver.enabled, icon: '🧵' },
     { name: 'Router', enabled: config.router.enabled, icon: '🔀' },
@@ -106,6 +112,9 @@ function buildHtml(
 
   // Quota panel
   const quotaHtml = buildQuotaHtml(quota, config.upstreamProvider);
+
+  // tpt-weave panel
+  const weaveHtml = buildWeaveHtml(config, weave);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -241,6 +250,9 @@ function buildHtml(
   <h2>Provider Quota</h2>
   ${quotaHtml}
 
+  <h2>Repository Context (tpt-weave)</h2>
+  ${weaveHtml}
+
   <h2>Modules</h2>
   <table>
     <thead><tr><th>Module</th><th>Status</th></tr></thead>
@@ -283,6 +295,27 @@ function buildSetupGuideHtml(
     <strong>Note on savings:</strong> Token savings and cost reduction are most impactful when using a pay-per-token API key (OpenRouter, Anthropic API, etc.). If you are on a Claude Pro/Max subscription, vault redaction and caching still work, but the cost savings shown here may not reflect your actual subscription spend.
   </span></div>
 </div>`;
+}
+
+function buildWeaveHtml(
+  config: ReturnType<typeof getConfig>,
+  weave: { repo: WeaveRepoStats; session: WeaveSessionStats } | undefined,
+): string {
+  if (!config.weave.enabled) {
+    return `<div class="quota-panel"><span style="color:var(--vscode-descriptionForeground);font-size:12px">tpt-weave integration is off. Enable <code>tpt.weave.enabled</code> and run <code>tpt-weave adopt</code> in the workspace to route repository context through the local index.</span></div>`;
+  }
+  if (!weave) {
+    return `<div class="quota-panel"><span style="color:var(--vscode-descriptionForeground);font-size:12px">No indexed workspace found. Run <code>tpt-weave adopt</code> in a workspace folder (requires the tpt-weave CLI).</span></div>`;
+  }
+  const { repo, session } = weave;
+  const sessionSaved = Math.max(0, Math.round(session.rawBytes / 4) - session.skeletonTokens);
+  return `<div class="quota-panel">
+    <div class="quota-row"><span class="quota-label">Repository</span><span class="quota-val">${repo.repository} (${repo.files} files, ${repo.symbols} symbols)</span></div>
+    <div class="quota-row"><span class="quota-label">Raw repository context</span><span class="quota-val">${repo.rawTokens.toLocaleString()} tokens</span></div>
+    <div class="quota-row"><span class="quota-label">Delivered by index</span><span class="quota-val">${repo.selectedTokens.toLocaleString()} tokens (${repo.reductionPct.toFixed(1)}% reduction)</span></div>
+    <div class="quota-row"><span class="quota-label">Index cache hit rate</span><span class="quota-val">${(repo.cacheHitRate * 100).toFixed(1)}%</span></div>
+    <div class="quota-row"><span class="quota-label">Skeleton replacements this session</span><span class="quota-val">${session.replacements.toLocaleString()} (~${sessionSaved.toLocaleString()} tokens saved)</span></div>
+  </div>`;
 }
 
 function buildQuotaHtml(quota: QuotaSnapshot | undefined, provider: string): string {

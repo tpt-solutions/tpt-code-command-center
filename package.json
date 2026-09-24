@@ -160,6 +160,22 @@
           "default": 512000,
           "description": "Max file size in bytes to process with Smart Context (default 500KB)."
         },
+        "tpt.weave.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "TPT Weave — for workspaces indexed with `tpt-weave adopt`, source file skeletons come from the shared tpt-weave index instead of re-parsing here (Rust files today)."
+        },
+        "tpt.weave.cliPath": {
+          "type": "string",
+          "default": "tpt-weave",
+          "description": "Path to the tpt-weave CLI binary used by TPT Weave."
+        },
+        "tpt.weave.level": {
+          "type": "number",
+          "default": 2,
+          "description": "Representation level requested from tpt-weave: 2 = signatures (compact), 3 = skeleton (full signatures and types, more tokens).",
+          "enum": [1, 2, 3, 4]
+        },
         "tpt.tokenShield.enabled": {
           "type": "boolean",
           "default": true,
@@ -404,7 +420,7 @@
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
     "pretest": "npm run compile",
-    "test": "node --test out/test/vault.test.js out/test/hash.test.js out/test/router.test.js out/test/promptCache.test.js out/test/integration/proxy.integration.test.js",
+    "test": "node --test out/test/vault.test.js out/test/hash.test.js out/test/router.test.js out/test/promptCache.test.js out/test/weave.test.js out/test/integration/proxy.integration.test.js",
     "download-wasm": "node scripts/download-wasm.js"
   },
   "devDependencies": {

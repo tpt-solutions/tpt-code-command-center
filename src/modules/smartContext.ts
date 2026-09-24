@@ -135,10 +135,22 @@ function extractOutlineWithParser(tree: any, originalSource: string): string {
 export interface SmartContextResult {
   messages: Message[];
   replaced: number;
+  /** Of `replaced`, how many came from the tpt-weave index (spec.md §32). */
+  weaveReplaced: number;
 }
 
-export async function runSmartContext(messages: Message[], maxFileSize: number): Promise<SmartContextResult> {
+/** Subset of the weave module's query surface used by Smart Context. */
+export interface WeaveSkeletonSource {
+  skeleton(relPath: string, rawBytes?: number): Promise<string | undefined>;
+}
+
+export async function runSmartContext(
+  messages: Message[],
+  maxFileSize: number,
+  weave?: WeaveSkeletonSource
+): Promise<SmartContextResult> {
   let replaced = 0;
+  let weaveReplaced = 0;
 
   const processedMessages = await Promise.all(
     messages.map(async (msg): Promise<Message> => {
@@ -158,6 +170,17 @@ export async function runSmartContext(messages: Message[], maxFileSize: number):
             : typeof (blockRecord.input as Record<string, unknown> | undefined)?.path === 'string'
               ? (blockRecord.input as Record<string, string>).path
               : undefined;
+
+          // tpt-weave-indexed Rust files: skeleton from the shared index
+          // (no duplicate parsing here; falls back on any miss/failure).
+          if (weave && toolPath && toolPath.replace(/\\/g, '/').endsWith('.rs')) {
+            const skeleton = await weave.skeleton(toolPath, Buffer.byteLength(content));
+            if (skeleton) {
+              replaced++;
+              weaveReplaced++;
+              return { ...block, content: skeleton };
+            }
+          }
 
           const ext = getFileExtension(content, toolPath);
           let outline: string;
@@ -187,5 +210,5 @@ export async function runSmartContext(messages: Message[], maxFileSize: number):
     })
   );
 
-  return { messages: processedMessages, replaced };
+  return { messages: processedMessages, replaced, weaveReplaced };
 }
