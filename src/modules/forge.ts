@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as https from 'https';
 import * as vscode from 'vscode';
 import { log } from '../utils/logger';
-import { getConfig } from '../utils/config';
+import { RouterRule, getConfig, validateUserSuppliedUrl } from '../utils/config';
 
 const DEFAULT_REGISTRY_URL = 'https://raw.githubusercontent.com/tpt-solutions/tpt-code-command-center/master/forge-registry/index.json';
 
@@ -65,12 +65,95 @@ export const BUILTIN_FORGE_ENTRIES: ForgeEntry[] = [
   },
 ];
 
-function getTptDir(): string | undefined {
+// The install folder, without creating it. Undefined when no workspace folder is open.
+function forgeDir(): string | undefined {
   const folders = vscode.workspace.workspaceFolders;
   if (!folders?.length) return undefined;
-  const dir = path.join(folders[0].uri.fsPath, '.tpt', 'forge');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  return path.join(folders[0].uri.fsPath, '.tpt', 'forge');
+}
+
+function getTptDir(): string | undefined {
+  const dir = forgeDir();
+  if (dir && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+// Each installed file is an envelope: the type tells the pipeline how to use the content.
+export interface InstalledEnvelope {
+  name: string;
+  type: ForgeEntry['type'];
+  version: string;
+  content: unknown;
+}
+
+const ENTRY_TYPES: readonly ForgeEntry['type'][] = ['router-rule', 'vault-pattern', 'system-prompt'];
+
+export function parseEnvelope(raw: unknown): InstalledEnvelope | undefined {
+  const v = raw as Partial<InstalledEnvelope> | null;
+  if (!v || typeof v !== 'object') return undefined;
+  if (typeof v.name !== 'string' || !ENTRY_TYPES.includes(v.type as ForgeEntry['type'])) return undefined;
+  if (!('content' in v)) return undefined;
+  return v as InstalledEnvelope;
+}
+
+export interface InstalledForge {
+  routerRules: RouterRule[];
+  vaultPatterns: string[];
+  systemPrompt?: string;
+}
+
+// Turns installed envelopes into the settings the pipeline uses. Shapes that do not match the
+// type are ignored; the modules that consume them still validate each rule and pattern.
+export function collectInstalledForge(envelopes: InstalledEnvelope[]): InstalledForge {
+  const out: InstalledForge = { routerRules: [], vaultPatterns: [] };
+  for (const env of envelopes) {
+    if (env.type === 'router-rule' && Array.isArray(env.content)) {
+      out.routerRules.push(...env.content.filter((r): r is RouterRule => !!r && typeof r === 'object' && !Array.isArray(r)));
+    } else if (env.type === 'vault-pattern' && Array.isArray(env.content)) {
+      out.vaultPatterns.push(...env.content.filter((p): p is string => typeof p === 'string'));
+    } else if (env.type === 'system-prompt') {
+      const text = (env.content as { text?: unknown } | null)?.text;
+      if (typeof text === 'string') out.systemPrompt = text;
+    }
+  }
+  return out;
+}
+
+// Installed files are read on every request, so each one is parsed only when its size or
+// modification time changes.
+const installedCache = new Map<string, { mtimeMs: number; size: number; envelope?: InstalledEnvelope }>();
+
+function readInstalledEnvelopes(): InstalledEnvelope[] {
+  const dir = forgeDir();
+  if (!dir || !fs.existsSync(dir)) return [];
+  const out: InstalledEnvelope[] = [];
+  for (const file of fs.readdirSync(dir)) {
+    if (!file.endsWith('.json')) continue;
+    const full = path.join(dir, file);
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(full);
+    } catch {
+      continue;
+    }
+    let cached = installedCache.get(full);
+    if (!cached || cached.mtimeMs !== stat.mtimeMs || cached.size !== stat.size) {
+      let envelope: InstalledEnvelope | undefined;
+      try {
+        envelope = parseEnvelope(JSON.parse(fs.readFileSync(full, 'utf8')));
+      } catch {
+        envelope = undefined;
+      }
+      cached = { mtimeMs: stat.mtimeMs, size: stat.size, envelope };
+      installedCache.set(full, cached);
+    }
+    if (cached.envelope) out.push(cached.envelope);
+  }
+  return out;
+}
+
+export function loadInstalledForge(): InstalledForge {
+  return collectInstalledForge(readInstalledEnvelopes());
 }
 
 const FORGE_FETCH_TIMEOUT_MS = 10_000;
@@ -127,8 +210,9 @@ export async function fetchForgeIndex(): Promise<ForgeEntry[]> {
 
   let remoteEntries: ForgeEntry[] = [];
   try {
-    const data = await fetchJson(registryUrl) as { entries: ForgeEntry[] };
-    remoteEntries = data.entries ?? [];
+    validateUserSuppliedUrl(registryUrl);
+    const data = await fetchJson(registryUrl) as { entries?: unknown };
+    remoteEntries = Array.isArray(data.entries) ? data.entries.filter(isForgeEntry) : [];
   } catch (e) {
     log(`Forge: registry unreachable (${registryUrl}) — using built-in entries. ${e}`);
   }
@@ -138,6 +222,17 @@ export async function fetchForgeIndex(): Promise<ForgeEntry[]> {
   for (const entry of BUILTIN_FORGE_ENTRIES) merged.set(entry.name, entry);
   for (const entry of remoteEntries) merged.set(entry.name, entry);
   return [...merged.values()];
+}
+
+// Registry data is untrusted: an entry must name a known type and a string name and version.
+function isForgeEntry(value: unknown): value is ForgeEntry {
+  const v = value as Partial<ForgeEntry> | null;
+  return !!v &&
+    typeof v.name === 'string' &&
+    typeof v.version === 'string' &&
+    typeof v.url === 'string' &&
+    typeof v.description === 'string' &&
+    ENTRY_TYPES.includes(v.type as ForgeEntry['type']);
 }
 
 export async function installForgeEntry(entry: ForgeEntry): Promise<boolean> {
@@ -152,20 +247,36 @@ export async function installForgeEntry(entry: ForgeEntry): Promise<boolean> {
     if (entry.localContent !== undefined) {
       content = entry.localContent;
     } else {
+      validateUserSuppliedUrl(entry.url);
       const raw = await fetchBytes(entry.url);
       if (!verifyForgePin(raw, entry.sha256, entry.name)) {
         log(`Forge: ${entry.name} has no sha256 pin; installed without integrity check`);
       }
       content = JSON.parse(raw.toString('utf8'));
     }
+    const envelope: InstalledEnvelope = { name: entry.name, type: entry.type, version: entry.version, content };
     const filename = `${entry.name.replace(/[^a-z0-9_-]/gi, '-')}.json`;
-    fs.writeFileSync(path.join(dir, filename), JSON.stringify(content, null, 2));
+    fs.writeFileSync(path.join(dir, filename), JSON.stringify(envelope, null, 2));
     log(`Forge: installed ${entry.name}`);
     return true;
   } catch (e) {
     log(`Forge: failed to install ${entry.name} — ${e}`);
     return false;
   }
+}
+
+// Re-installs every installed entry that the registry still lists, so pinned remote content
+// picks up new versions. An unreachable registry leaves the installed files as they are.
+export async function refreshInstalledForge(): Promise<number> {
+  const installed = new Set(readInstalledEnvelopes().map((e) => e.name));
+  if (installed.size === 0) return 0;
+
+  let refreshed = 0;
+  for (const entry of await fetchForgeIndex()) {
+    if (!installed.has(entry.name)) continue;
+    if (await installForgeEntry(entry)) refreshed++;
+  }
+  return refreshed;
 }
 
 export async function browseForge(): Promise<void> {

@@ -5,21 +5,24 @@
       "description": "Comprehensive TPT Router ruleset — routes short/simple prompts to cheaper models and code, debugging, and security contexts to capable models",
       "type": "router-rule",
       "url": "https://raw.githubusercontent.com/tpt-solutions/tpt-code-command-center/master/forge-registry/configs/default-router-rules.json",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "sha256": "04ec6159c9539b89d14cdf437d0f7ea12c121f6ba78932d8fef7f12c7bc1b232"
     },
     {
       "name": "common-vault-patterns",
       "description": "Extended credential patterns for Slack, SendGrid, Twilio, Google Cloud, Azure AD, and generic internal API key formats",
       "type": "vault-pattern",
       "url": "https://raw.githubusercontent.com/tpt-solutions/tpt-code-command-center/master/forge-registry/configs/common-vault-patterns.json",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "sha256": "2c364f2fe44ac88435860dc42193aaa1a8b8a1a2b5bcbada636326496631cb03"
     },
     {
       "name": "silent-edit-system-prompt",
       "description": "System prompt template that instructs LLMs to output file edits using the TPT Silent Edit tpt-edit JSON schema",
       "type": "system-prompt",
       "url": "https://raw.githubusercontent.com/tpt-solutions/tpt-code-command-center/master/forge-registry/configs/silent-edit-system-prompt.json",
-      "version": "1.0.0"
+      "version": "1.0.0",
+      "sha256": "3131f3db914b68814190301ef1a877ea6dbe591cbfce2b65df1e00cb8a28aab2"
     }
   ]
 }
