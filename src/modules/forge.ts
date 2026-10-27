@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as https from 'https';
@@ -14,6 +15,8 @@ export interface ForgeEntry {
   url: string;
   version: string;
   localContent?: unknown;
+  // Optional SHA-256 of the file at `url`, as 64 hex characters. A mismatch refuses the install.
+  sha256?: string;
 }
 
 const BUILTIN_FORGE_ENTRIES: ForgeEntry[] = [
@@ -75,7 +78,7 @@ const FORGE_MAX_BYTES = 5 * 1024 * 1024;
 
 // Registry content is untrusted input: https only, bounded time and size, and a non-200
 // answer is an error rather than something to parse.
-function fetchJson(url: string): Promise<unknown> {
+function fetchBytes(url: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     if (!url.startsWith('https://')) {
       reject(new Error(`Forge registry must use https (got ${url})`));
@@ -97,14 +100,25 @@ function fetchJson(url: string): Promise<unknown> {
         }
         chunks.push(c);
       });
-      res.on('end', () => {
-        try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
-        catch (e) { reject(e); }
-      });
+      res.on('end', () => resolve(Buffer.concat(chunks)));
     });
     req.setTimeout(FORGE_FETCH_TIMEOUT_MS, () => req.destroy(new Error('Forge registry timed out')));
     req.on('error', reject);
   });
+}
+
+function fetchJson(url: string): Promise<unknown> {
+  return fetchBytes(url).then((raw) => JSON.parse(raw.toString('utf8')));
+}
+
+// A registry entry may pin the SHA-256 of its file. The bytes checked are the bytes installed.
+export function verifyForgePin(raw: Buffer, expected: string | undefined, name: string): boolean {
+  if (!expected) return false;
+  const actual = crypto.createHash('sha256').update(raw).digest('hex');
+  if (actual !== expected.toLowerCase()) {
+    throw new Error(`hash mismatch for ${name}: pinned ${expected}, downloaded ${actual}`);
+  }
+  return true;
 }
 
 export async function fetchForgeIndex(): Promise<ForgeEntry[]> {
@@ -134,7 +148,16 @@ export async function installForgeEntry(entry: ForgeEntry): Promise<boolean> {
   }
 
   try {
-    const content = entry.localContent !== undefined ? entry.localContent : await fetchJson(entry.url);
+    let content: unknown;
+    if (entry.localContent !== undefined) {
+      content = entry.localContent;
+    } else {
+      const raw = await fetchBytes(entry.url);
+      if (!verifyForgePin(raw, entry.sha256, entry.name)) {
+        log(`Forge: ${entry.name} has no sha256 pin; installed without integrity check`);
+      }
+      content = JSON.parse(raw.toString('utf8'));
+    }
     const filename = `${entry.name.replace(/[^a-z0-9_-]/gi, '-')}.json`;
     fs.writeFileSync(path.join(dir, filename), JSON.stringify(content, null, 2));
     log(`Forge: installed ${entry.name}`);
