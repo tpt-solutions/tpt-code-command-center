@@ -87,31 +87,8 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
     }
   }
 
-  // 5. Silent Edit: prepend schema instructions to system prompt
-  if (config.silentEdit.enabled) {
-    body = runSilentEditInjection(body, req.format) as AnthropicRequest | OpenAIRequest;
-    actions.push('silentEdit:injected');
-  }
-
-  // 5.5. Prompt Cache: mark stable content for Anthropic's native caching discount
-  if (config.promptCache.enabled && req.format === 'anthropic') {
-    const result = runPromptCache(body as AnthropicRequest);
-    body = result.body;
-    if (result.breakpoints > 0) {
-      actions.push(`promptCache:breakpoints=${result.breakpoints}`);
-    }
-  }
-
-  // 5.6. Mistral has no automatic caching — set a stable prompt_cache_key instead
-  if (config.upstreamProvider === 'mistral' && req.format === 'openai') {
-    const result = runMistralCacheKey(body as OpenAIRequest);
-    body = result.body;
-    if (result.applied) {
-      actions.push('promptCache:mistralKey');
-    }
-  }
-
-  // 6. Router: rewrite model/provider based on heuristics
+  // 5. Router: rewrite model/provider based on heuristics. Runs before the provider-specific
+  //    steps below, so they see the provider the request will actually be sent to.
   let overrideUpstream: PipelineResult['overrideUpstream'];
   if (config.router.enabled) {
     const routeResult = runRouter(body, config.router.rules, req.format);
@@ -122,6 +99,32 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
         body = { ...body, model: routeResult.model } as AnthropicRequest | OpenAIRequest;
       }
       actions.push(`router:${routeResult.model}@${routeResult.baseUrl}`);
+    }
+  }
+  const effectiveProvider = overrideUpstream?.provider ?? config.upstreamProvider;
+
+  // 6. Silent Edit: prepend schema instructions to system prompt
+  if (config.silentEdit.enabled) {
+    body = runSilentEditInjection(body, req.format) as AnthropicRequest | OpenAIRequest;
+    actions.push('silentEdit:injected');
+  }
+
+  // 7. Prompt Cache: mark stable content for Anthropic's native caching discount
+  if (config.promptCache.enabled && req.format === 'anthropic') {
+    const result = runPromptCache(body as AnthropicRequest);
+    body = result.body;
+    if (result.breakpoints > 0) {
+      actions.push(`promptCache:breakpoints=${result.breakpoints}`);
+    }
+  }
+
+  // 8. Mistral has no automatic caching — set a stable prompt_cache_key instead. Only for
+  //    requests that really go to Mistral: other providers may reject the unknown field.
+  if (effectiveProvider === 'mistral' && req.format === 'openai') {
+    const result = runMistralCacheKey(body as OpenAIRequest);
+    body = result.body;
+    if (result.applied) {
+      actions.push('promptCache:mistralKey');
     }
   }
 
