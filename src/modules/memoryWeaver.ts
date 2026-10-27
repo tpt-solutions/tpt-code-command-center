@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as http from 'http';
 import * as vscode from 'vscode';
+import * as crypto from 'crypto';
 import { Message } from '../proxy/types';
 import { getConfig, resolveUpstreamUrl, validateUserSuppliedUrl } from '../utils/config';
 import { log } from '../utils/logger';
@@ -54,20 +55,49 @@ export function pairSafeTail(conversation: Message[], count: number): Message[] 
   return conversation.slice(start);
 }
 
+// Summaries cut the conversation on multiples of this many messages. The summarised prefix then
+// stays the same for SUMMARY_BLOCK turns, so the upstream prompt cache keeps hitting. A cut that
+// moves every turn would miss the cache every turn and re-summarise every request.
+export const SUMMARY_BLOCK = 8;
+const KEEP_TAIL = 4;
+
+// Index where the kept tail starts: the last multiple of SUMMARY_BLOCK that leaves at least
+// KEEP_TAIL messages after it. Returns 0 when there is nothing to summarise yet.
+export function summaryBoundary(conversation: Message[]): number {
+  let boundary = Math.floor(Math.max(0, conversation.length - KEEP_TAIL) / SUMMARY_BLOCK) * SUMMARY_BLOCK;
+  // The tail must not start on an orphaned tool result
+  while (boundary > 0 && isToolResultMessage(conversation[boundary])) boundary--;
+  return boundary;
+}
+
+// Summaries of prefixes already summarised, keyed by a hash of the prefix. Bounded, oldest first out.
+const SUMMARY_MEMO_MAX = 16;
+const summaryMemo = new Map<string, string>();
+
+function prefixKey(prefix: Message[]): string {
+  return crypto.createHash('sha256').update(JSON.stringify(prefix)).digest('hex');
+}
+
 function extractiveSummarise(messages: Message[], threshold: number): Message[] {
   // Keep system messages and last N messages that fit within threshold
   const system = messages.filter((m) => m.role === 'system');
   const conversation = messages.filter((m) => m.role !== 'system');
-
   const maxChars = threshold * 4 * 0.6; // keep 60% of threshold
-  let chars = 0;
-  let start = conversation.length;
 
-  for (let i = conversation.length - 1; i >= 0; i--) {
-    const len = messageChars(conversation[i]);
-    if (chars + len > maxChars) break;
-    chars += len;
-    start = i;
+  // Prefer the block-aligned cut when its tail fits the same 60% budget: it changes less from turn to turn
+  const aligned = summaryBoundary(conversation);
+  const alignedChars = conversation.slice(aligned).reduce((n, m) => n + messageChars(m), 0);
+  let start = aligned;
+
+  if (alignedChars > maxChars) {
+    let chars = 0;
+    start = conversation.length;
+    for (let i = conversation.length - 1; i >= 0; i--) {
+      const len = messageChars(conversation[i]);
+      if (chars + len > maxChars) break;
+      chars += len;
+      start = i;
+    }
   }
 
   // Extend the window backwards if it would begin with an orphaned tool result
@@ -217,6 +247,26 @@ export interface MemoryWeaverResult {
   summarised: boolean;
 }
 
+// Returns the summary of a prefix. A prefix summarised before is reused, so repeat requests do not
+// call the summariser again. Only a new summary is saved to memory.json.
+async function summariseOrReuse(
+  prefix: Message[],
+  summarise: () => Promise<string | null>
+): Promise<{ text: string; fresh: boolean } | null> {
+  const key = prefixKey(prefix);
+  const known = summaryMemo.get(key);
+  if (known !== undefined) return { text: known, fresh: false };
+
+  const text = await summarise();
+  if (!text) return null;
+  summaryMemo.set(key, text);
+  if (summaryMemo.size > SUMMARY_MEMO_MAX) {
+    summaryMemo.delete(summaryMemo.keys().next().value as string);
+  }
+  saveMemory(text);
+  return { text, fresh: true };
+}
+
 export async function runMemoryWeaver(
   messages: Message[],
   options: MemoryWeaverOptions
@@ -228,26 +278,26 @@ export async function runMemoryWeaver(
 
   log(`Memory Weaver triggered — estimated ${tokenCount} tokens (threshold: ${options.tokenThreshold})`);
 
+  const system = messages.filter((m) => m.role === 'system');
+  const conversation = messages.filter((m) => m.role !== 'system');
+  const boundary = summaryBoundary(conversation);
+  const prefix = conversation.slice(0, boundary);
+  const tail = conversation.slice(boundary);
+
   for (const backend of options.fallbackOrder) {
-    if (backend === 'ollama') {
-      const summary = await summariseViaOllama(messages, options.ollamaModel);
+    if (backend === 'ollama' || backend === 'proxy') {
+      // With nothing before the tail there is nothing to summarise yet
+      if (boundary === 0) continue;
+      const label = backend === 'ollama' ? 'Ollama' : 'proxy LLM';
+      const summary = await summariseOrReuse(prefix, () =>
+        backend === 'ollama'
+          ? summariseViaOllama(prefix, options.ollamaModel)
+          : summariseViaProxy(prefix, options)
+      );
       if (summary) {
-        saveMemory(summary);
-        const system = messages.filter((m) => m.role === 'system');
-        const last = pairSafeTail(messages.filter((m) => m.role !== 'system'), 4);
-        const summaryMsg: Message = { role: 'user', content: `[Memory Weaver Summary]\n${summary}` };
-        log('Memory Weaver: summarised via Ollama');
-        return { messages: [...system, summaryMsg, ...last], summarised: true };
-      }
-    } else if (backend === 'proxy') {
-      const summary = await summariseViaProxy(messages, options);
-      if (summary) {
-        saveMemory(summary);
-        const system = messages.filter((m) => m.role === 'system');
-        const last = pairSafeTail(messages.filter((m) => m.role !== 'system'), 4);
-        const summaryMsg: Message = { role: 'user', content: `[Memory Weaver Summary]\n${summary}` };
-        log('Memory Weaver: summarised via proxy LLM');
-        return { messages: [...system, summaryMsg, ...last], summarised: true };
+        const summaryMsg: Message = { role: 'user', content: `[Memory Weaver Summary]\n${summary.text}` };
+        log(`Memory Weaver: ${summary.fresh ? 'summarised' : 'reused a summary'} via ${label}`);
+        return { messages: [...system, summaryMsg, ...tail], summarised: true };
       }
     } else if (backend === 'extractive') {
       const trimmed = extractiveSummarise(messages, options.tokenThreshold);
