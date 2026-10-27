@@ -10,8 +10,23 @@ import type { Database } from 'sql.js';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let initSqlJs: (config?: any) => Promise<any>;
 let db: Database | undefined;
+let dbReady: Promise<Database> | undefined;
 
-async function getDb(): Promise<Database> {
+// Cached responses older than this are treated as misses (stale answers to repeated prompts)
+const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+// Shared promise so concurrent first requests don't each open (and overwrite) the database
+function getDb(): Promise<Database> {
+  if (!dbReady) {
+    dbReady = openDb().catch((e) => {
+      dbReady = undefined;
+      throw e;
+    });
+  }
+  return dbReady;
+}
+
+async function openDb(): Promise<Database> {
   if (db) return db;
 
   if (!initSqlJs) {
@@ -84,14 +99,20 @@ export interface TokenShieldConfig {
   };
 }
 
-export async function runTokenShield(messages: Message[], config: TokenShieldConfig): Promise<string | null> {
-  const hash = hashPrompt(messages);
+export async function runTokenShield(
+  messages: Message[],
+  config: TokenShieldConfig,
+  scope: Record<string, unknown> = {}
+): Promise<string | null> {
+  const hash = hashPrompt(messages, scope);
   const database = await getDb();
 
-  // 1. Exact hash match
-  const result = database.exec('SELECT response FROM cache WHERE hash = ?', [hash]);
-  const exact = (result[0]?.values[0]?.[0] as string) ?? null;
-  if (exact) return exact;
+  // 1. Exact hash match (entries past the TTL are ignored)
+  const result = database.exec('SELECT response, ts FROM cache WHERE hash = ?', [hash]);
+  const row = result[0]?.values[0];
+  if (row && Date.now() - Number(row[1]) < CACHE_TTL_MS) {
+    return row[0] as string;
+  }
 
   // 2. Semantic match (opt-in, requires Ollama)
   if (config.semanticCache.enabled) {
@@ -105,9 +126,10 @@ export async function runTokenShield(messages: Message[], config: TokenShieldCon
 export async function storeCachedResponse(
   messages: Message[],
   response: string,
-  config: TokenShieldConfig
+  config: TokenShieldConfig,
+  scope: Record<string, unknown> = {}
 ): Promise<void> {
-  const hash = hashPrompt(messages);
+  const hash = hashPrompt(messages, scope);
   const database = await getDb();
   const size = Buffer.byteLength(response);
   const maxCacheSizeMB = config.maxCacheSizeMB;
@@ -138,10 +160,31 @@ export async function storeCachedResponse(
 
   // Also store embedding for semantic cache
   if (config.semanticCache.enabled) {
-    storeEmbedding(messages, response, database, config.semanticCache, maxBytes).catch(() => { /* non-fatal */ });
+    storeEmbedding(messages, response, database, config.semanticCache, maxBytes, scope).catch(() => { /* non-fatal */ });
   }
 
   persistDb();
+}
+
+// Everything besides the messages that changes what the upstream returns.
+// Used as part of the cache key so identical messages sent to a different model,
+// system prompt, tool set or API format never receive each other's response.
+export function buildCacheScope(body: Record<string, unknown>, format: 'anthropic' | 'openai'): Record<string, unknown> {
+  return {
+    format,
+    model: body.model,
+    system: body.system,
+    tools: body.tools,
+    tool_choice: body.tool_choice,
+    temperature: body.temperature,
+    max_tokens: body.max_tokens,
+  };
+}
+
+// A response that asks the client to run a tool is tied to that turn; replaying it
+// would hand a stale tool call to a later request, so these are never cached.
+export function responseHasToolCall(responseBody: string): boolean {
+  return /"type"\s*:\s*"tool_use"/.test(responseBody) || /"tool_calls"\s*:/.test(responseBody);
 }
 
 export async function clearCache(): Promise<void> {
@@ -253,13 +296,14 @@ async function storeEmbedding(
   response: string,
   database: Database,
   cfg: SemanticConfig,
-  maxBytes: number
+  maxBytes: number,
+  scope: Record<string, unknown>
 ): Promise<void> {
   const text = messagesText(messages);
   const embedding = await fetchEmbedding(text, cfg);
   if (!embedding) return;
 
-  const hash = hashPrompt(messages);
+  const hash = hashPrompt(messages, scope);
   const embJson = JSON.stringify(embedding);
   const size = Buffer.byteLength(response) + Buffer.byteLength(embJson);
 

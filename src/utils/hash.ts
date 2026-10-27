@@ -1,14 +1,13 @@
 import * as crypto from 'crypto';
 
 /**
- * Normalises a prompt string for cache key generation:
- * strips model-specific fields, collapses whitespace, lowercases.
+ * Builds a cache key for a request. `scope` carries everything that changes the
+ * response besides the messages (model, system prompt, tools, format, sampling
+ * params). Content is hashed exactly as sent: case and whitespace are significant
+ * (code, diffs and Python indentation depend on them).
  */
-export function hashPrompt(messages: unknown[]): string {
-  const normalised = JSON.stringify(messages)
-    .replace(/\s+/g, ' ')
-    .toLowerCase()
-    .trim();
+export function hashPrompt(messages: unknown[], scope: Record<string, unknown> = {}): string {
+  const normalised = JSON.stringify({ scope, messages });
   return crypto.createHash('sha256').update(normalised).digest('hex');
 }
 

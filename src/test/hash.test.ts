@@ -13,27 +13,31 @@ test('hashPrompt: different content produces different hash', () => {
   assert.notEqual(hashPrompt(a), hashPrompt(b));
 });
 
-test('hashPrompt: whitespace is normalised (extra spaces collapse)', () => {
+test('hashPrompt: whitespace is significant (no collapsing)', () => {
   const a = [{ role: 'user', content: 'hello   world' }];
   const b = [{ role: 'user', content: 'hello world' }];
-  assert.equal(hashPrompt(a), hashPrompt(b));
+  assert.notEqual(hashPrompt(a), hashPrompt(b));
 });
 
-test('hashPrompt: comparison is case-insensitive', () => {
+test('hashPrompt: comparison is case-sensitive', () => {
   const a = [{ role: 'user', content: 'Hello World' }];
   const b = [{ role: 'user', content: 'hello world' }];
-  assert.equal(hashPrompt(a), hashPrompt(b));
+  assert.notEqual(hashPrompt(a), hashPrompt(b));
 });
 
-test('hashPrompt: multiple spaces in content normalise to single space', () => {
-  // hashPrompt collapses whitespace in the JSON-serialised form.
-  // Space characters in content are literal spaces in JSON, so they ARE collapsed.
-  // Note: \t/\n inside content values get JSON-escaped to \\t/\\n sequences
-  // (i.e. the two-char literal backslash+letter), which are NOT matched by /\s+/,
-  // so tabs/newlines in content do NOT normalise to spaces — that is expected behaviour.
-  const a = [{ role: 'user', content: 'foo   bar   baz' }];
-  const b = [{ role: 'user', content: 'foo bar baz' }];
-  assert.equal(hashPrompt(a), hashPrompt(b));
+test('hashPrompt: indentation inside content is preserved (Python-safe)', () => {
+  const a = [{ role: 'user', content: 'def f():\n    return 1' }];
+  const b = [{ role: 'user', content: 'def f():\n return 1' }];
+  assert.notEqual(hashPrompt(a), hashPrompt(b));
+});
+
+test('hashPrompt: scope (model, system, tools) changes the key', () => {
+  const msgs = [{ role: 'user', content: 'hello' }];
+  const base = hashPrompt(msgs, { model: 'claude-sonnet-5-5' });
+  assert.notEqual(base, hashPrompt(msgs, { model: 'claude-haiku-5-5' }));
+  assert.notEqual(base, hashPrompt(msgs, { model: 'claude-sonnet-5-5', system: 'be terse' }));
+  assert.notEqual(base, hashPrompt(msgs, { model: 'claude-sonnet-5-5', tools: [{ name: 'x' }] }));
+  assert.notEqual(base, hashPrompt(msgs, { model: 'claude-sonnet-5-5', format: 'openai' }));
 });
 
 test('hashPrompt: returns 64-character lowercase hex string', () => {
