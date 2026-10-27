@@ -20,6 +20,27 @@ import { configureClineAuto } from './modules/clineConfig';
 import { runSetupWizard } from './ui/setupWizard';
 import { getConfig } from './utils/config';
 import { initConnectionState } from './utils/connection';
+import { API_KEY_SETTINGS, SettingsLike, clearKeys, loadKeys, migrateKeysFromSettings } from './utils/secrets';
+
+// The settings-file view the migration needs: each scope's value, and removal from both scopes
+function vscodeSettings(): SettingsLike {
+  const cfg = vscode.workspace.getConfiguration('tpt');
+  return {
+    read(name) {
+      const inspected = cfg.inspect<string>(name);
+      return { workspace: inspected?.workspaceValue, global: inspected?.globalValue };
+    },
+    async remove(name) {
+      const inspected = cfg.inspect<string>(name);
+      if (inspected?.workspaceValue !== undefined) {
+        await cfg.update(name, undefined, vscode.ConfigurationTarget.Workspace);
+      }
+      if (inspected?.globalValue !== undefined) {
+        await cfg.update(name, undefined, vscode.ConfigurationTarget.Global);
+      }
+    },
+  };
+}
 
 function memoryFilePath(): string | undefined {
   const folders = vscode.workspace.workspaceFolders;
@@ -63,6 +84,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   setStoragePath(context.globalStorageUri.fsPath);
   initConnectionState(context.globalState);
 
+  // Keys move from settings.json into SecretStorage on first run; the cache is loaded before
+  // the proxy reads its config
+  await loadKeys(context.secrets);
+  const moved = await migrateKeysFromSettings(context.secrets, vscodeSettings());
+  if (moved.length > 0) {
+    log(`Moved ${moved.length} API key setting(s) from settings.json into secure storage`);
+  }
+
   // Point Smart Context at the bundled WASM files shipped inside the extension
   const wasmDir = require('path').join(context.extensionPath, 'media', 'wasm');
   setWasmDir(wasmDir);
@@ -75,9 +104,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   checkGitignore(context);
 
   // First-run: offer setup wizard if no API key is configured
-  const cfg = vscode.workspace.getConfiguration('tpt');
-  const hasAnyKey = ['openrouterApiKey', 'anthropicApiKey', 'openaiApiKey', 'deepseekApiKey', 'grokApiKey', 'qwenApiKey', 'kimiApiKey', 'glmApiKey', 'mimoApiKey', 'mistralApiKey', 'groqApiKey', 'geminiApiKey']
-    .some((k) => !!cfg.get<string>(k, ''));
+  const current = getConfig() as unknown as Record<string, string>;
+  const hasAnyKey = API_KEY_SETTINGS.some((k) => !!current[k]);
   if (!hasAnyKey && !context.globalState.get<boolean>('tpt.wizardDismissed')) {
     vscode.window.showInformationMessage(
       'Welcome to TPT Code Command Center! Set up your API key to get started.',
@@ -307,20 +335,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (confirm !== 'Yes, reset') return;
       const c = vscode.workspace.getConfiguration('tpt');
       const target = vscode.ConfigurationTarget.Workspace;
+      await clearKeys(context.secrets);
       await Promise.all([
-        c.update('openrouterApiKey', '', target),
-        c.update('anthropicApiKey', '', target),
-        c.update('openaiApiKey', '', target),
-        c.update('deepseekApiKey', '', target),
-        c.update('qwenApiKey', '', target),
-        c.update('kimiApiKey', '', target),
-        c.update('grokApiKey', '', target),
-        c.update('glmApiKey', '', target),
-        c.update('mimoApiKey', '', target),
-        c.update('mistralApiKey', '', target),
-        c.update('groqApiKey', '', target),
-        c.update('geminiApiKey', '', target),
-        c.update('customApiKey', '', target),
         c.update('customBaseUrl', '', target),
         c.update('upstreamProvider', 'openrouter', target),
       ]);

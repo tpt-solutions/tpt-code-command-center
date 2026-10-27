@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { testProxyConnection } from '../proxy/server';
 import { getChannel } from '../utils/logger';
+import { ApiKeySetting, storeKey } from '../utils/secrets';
 
 interface ProviderOption {
   label: string;
@@ -181,9 +182,10 @@ export async function runSetupWizard(context: vscode.ExtensionContext): Promise<
       await cfg.update('customBaseUrl', baseUrl, target);
     }
 
-    const keySetting = PROVIDER_KEY_SETTING[opt.provider];
+    // Keys go to SecretStorage, never to settings.json
+    const keySetting = PROVIDER_KEY_SETTING[opt.provider] as ApiKeySetting | undefined;
     if (keySetting && apiKey) {
-      await cfg.update(keySetting, apiKey, target);
+      await storeKey(context.secrets, keySetting, apiKey);
     }
   }
 

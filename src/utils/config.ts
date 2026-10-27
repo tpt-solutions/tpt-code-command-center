@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { API_KEY_SETTINGS, cachedKey } from './secrets';
 
 export const UPSTREAM_PROVIDERS = [
   'openrouter',
@@ -76,9 +77,19 @@ export interface RouterRule {
   provider: string;
 }
 
+// Keys come from SecretStorage when it holds them; settings.json is only a fallback
+function withSecretKeys(config: TptConfig): TptConfig {
+  const overrides = config as unknown as Record<string, string>;
+  for (const name of API_KEY_SETTINGS) {
+    const secret = cachedKey(name);
+    if (secret) overrides[name] = secret;
+  }
+  return config;
+}
+
 export function getConfig(): TptConfig {
   const c = vscode.workspace.getConfiguration('tpt');
-  return {
+  return withSecretKeys({
     enabled: c.get<boolean>('enabled', true),
     upstreamProvider: c.get<UpstreamProvider>('upstreamProvider', 'openrouter'),
     openrouterApiKey: c.get<string>('openrouterApiKey', ''),
@@ -150,7 +161,7 @@ export function getConfig(): TptConfig {
       hardStop: c.get<boolean>('costBudget.hardStop', false),
       quotaPollingIntervalSec: c.get<number>('costBudget.quotaPollingIntervalSec', 180),
     },
-  };
+  });
 }
 
 export function workspaceRoots(): string[] {

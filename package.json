@@ -82,61 +82,73 @@
         },
         "tpt.openrouterApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "OpenRouter API key."
         },
         "tpt.anthropicApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "Anthropic API key for direct routing."
         },
         "tpt.openaiApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "OpenAI API key for direct routing."
         },
         "tpt.deepseekApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "DeepSeek API key (platform.deepseek.com)."
         },
         "tpt.qwenApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "Qwen API key — Alibaba Cloud DashScope key."
         },
         "tpt.kimiApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "Kimi API key — Moonshot AI (platform.moonshot.cn)."
         },
         "tpt.grokApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "Grok API key — xAI (console.x.ai)."
         },
         "tpt.glmApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "GLM API key — Zhipu AI / Z.ai (z.ai)."
         },
         "tpt.mimoApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "MiMo API key — Xiaomi (platform.xiaomimimo.com)."
         },
         "tpt.groqApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "Groq API key (console.groq.com)."
         },
         "tpt.geminiApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "Google Gemini API key (aistudio.google.com)."
         },
         "tpt.mistralApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "Mistral API key (console.mistral.ai)."
         },
@@ -152,6 +164,7 @@
         },
         "tpt.customApiKey": {
           "type": "string",
+          "deprecationMessage": "Keys are stored in secure storage now, not here. Use TPT: Run Setup Wizard to set this key.",
           "default": "",
           "description": "API key for custom upstream."
         },
@@ -466,7 +479,7 @@
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
     "pretest": "npm run compile",
-    "test": "node --test out/test/vault.test.js out/test/vaultExtended.test.js out/test/hash.test.js out/test/router.test.js out/test/routerRules.test.js out/test/promptCache.test.js out/test/weave.test.js out/test/requestPaths.test.js out/test/editSafety.test.js out/test/config.test.js out/test/memoryWeaver.test.js out/test/tokenShield.test.js out/test/ledger.test.js out/test/silentEditParse.test.js out/test/promptCacheLimits.test.js out/test/presets.test.js out/test/usage.test.js out/test/pipeline.test.js out/test/ledgerPersistence.test.js out/test/weaveFreshness.test.js out/test/pricing.test.js out/test/forge.test.js out/test/smartContextRanges.test.js out/test/providers.test.js out/test/connection.test.js out/test/forgeBuiltins.test.js out/test/integration/proxy.integration.test.js out/test/integration/proxy.server.integration.test.js",
+    "test": "node --test out/test/vault.test.js out/test/vaultExtended.test.js out/test/hash.test.js out/test/router.test.js out/test/routerRules.test.js out/test/promptCache.test.js out/test/weave.test.js out/test/requestPaths.test.js out/test/editSafety.test.js out/test/config.test.js out/test/memoryWeaver.test.js out/test/tokenShield.test.js out/test/ledger.test.js out/test/silentEditParse.test.js out/test/promptCacheLimits.test.js out/test/presets.test.js out/test/usage.test.js out/test/pipeline.test.js out/test/ledgerPersistence.test.js out/test/weaveFreshness.test.js out/test/pricing.test.js out/test/forge.test.js out/test/smartContextRanges.test.js out/test/providers.test.js out/test/connection.test.js out/test/forgeBuiltins.test.js out/test/secrets.test.js out/test/integration/proxy.integration.test.js out/test/integration/proxy.server.integration.test.js",
     "download-wasm": "node scripts/download-wasm.js"
   },
   "devDependencies": {
