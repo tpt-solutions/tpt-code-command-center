@@ -2,7 +2,8 @@
   "name": "tpt-code-command-center",
   "displayName": "TPT Code Command Center",
   "description": "Local AI token optimization proxy — intercepts, redacts, caches, and routes LLM traffic from Cline, Claude Code, and any OpenAI-compatible client.",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "license": "(MIT OR Apache-2.0)",
   "publisher": "tpt",
   "engines": {
     "vscode": "^1.85.0"
