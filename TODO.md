@@ -123,7 +123,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [x] Start-up: terminal-env failure no longer aborts the proxy; env is written after the port is bound (no stale port after fallback); commands register before the proxy starts, so a failed start keeps them working
 - [x] Bind and advertise `127.0.0.1` instead of `localhost`
 - [x] `findFreePort` bounded and retries only on EADDRINUSE; retries after a lost race; `stopProxyServer` drops open connections and `deactivate` awaits the close; pricing refreshes hourly
-- [ ] Hard budget stop is racy: concurrent requests can pass the check before their spend is recorded. (Bypass when `tpt.enabled` is false is by design: disabled means pass-through.) [x] Alert day now uses the local calendar day. [ ] 7-day chart still buckets by UTC day
+- [ ] Hard budget stop is racy: concurrent requests can pass the check before their spend is recorded. (Bypass when `tpt.enabled` is false is by design: disabled means pass-through.) [x] Alert day now uses the local calendar day. [x] 7-day chart and monthly summary bucket by local day
 - [x] Concurrent first-call init race fixed in Token Shield `getDb()` and the ledger
 - [ ] Ledger: debounced writes (still a full synchronous export per request); multi-window overwrite. [x] Atomic writes (temp file + rename). [x] CSV quote escaping and formula-injection guard. [x] Read-only and virtual workspaces no longer throw
 - [x] `sql.js` path checked by reading: compiled `out/` resolves to the root `node_modules`, and `.vscodeignore` keeps `node_modules/sql.js`. Still confirm in a `.vsix` install (Phase 14)
@@ -134,7 +134,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [x] Weave: `..` containment fixed for both the name check and path resolution. [ ] Per-request cache is still useless (recreated each request); [ ] skeleton can be stale vs. partial reads
 - [x] Dead/stub code: `pruneMemory` now clears Memory Weaver history (with confirmation); `clearLedger` has a command; `getDailySpendUsd` and `ProxyResponse` removed. [ ] `memory.json` is still write-only
 - [x] Pricing: lookup is vendor-aware with longest-match (Anthropic dated ids now resolve); empty model → cost 0; negative OpenRouter prices ignored; 24 h refresh recurs. [ ] No pricing without a workspace folder
-- [ ] Cost accuracy: [ ] input tokens estimated `chars/4` — should use upstream `usage`; [ ] add cache read/write rates. [x] `exportMonthlySummary` Requests column is now a real per-month count. [x] Savings averages use real upstream calls only (cache hits excluded)
+- [ ] Cost accuracy: [x] the ledger records the provider's own token counts (`ledger/usage.ts`), falling back to the `chars/4` estimate only when none come back. [ ] Cache read/write prices are not in the pricing table, so cached prompts are billed at full input price (an overstatement). [x] `exportMonthlySummary` Requests column is now a real per-month count. [x] Savings averages use real upstream calls only (cache hits excluded)
 
 ### Security
 - [x] Path allowlist — only `/v1/messages`, `/v1/chat/completions`, `/v1/models` and `/v1/embeddings` are proxied; anything else returns 404
@@ -178,7 +178,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 
 ## Phase 14 — Test Coverage Gaps (In progress)
 
-Automated: `npm run compile` clean; `npm test` 143/143 passing; `npm run lint` clean.
+Automated: `npm run compile` clean; `npm test` 153/153 passing; `npm run lint` clean.
 
 - [x] `runRouter`: rule matching, returned provider, unknown provider, empty match, format mismatch, keyword matching ignores tool output, built-in rule order (`routerRules.test.ts`). [ ] Override applied to the upstream request (needs an integration test)
 - [x] Token Shield: key scope (model, system, format), tool-call detection (`tokenShield.test.ts`). [ ] Eviction SQL, TTL expiry, semantic cache
@@ -193,5 +193,6 @@ Automated: `npm run compile` clean; `npm test` 143/143 passing; `npm run lint` c
 - [x] SSRF validation: bracketed and mapped IPv6, CGNAT, decimal/hex IPv4, provider validation (`config.test.ts`)
 - [x] Ledger: CSV quoting and formula guard (`ledger.test.ts`)
 - [x] End-to-end against the real server (`proxy.server.integration.test.ts`, mock upstream): routed model reaches the upstream with a single `/v1` path; a cross-format rule is not applied; bodyless `GET /v1/models` passes through; missing or wrong token gets 401; a path outside the allowlist gets 404 and never reaches the upstream
-- [ ] Integration still open: routed-provider auth headers, streaming client disconnect aborting the upstream, and `ANTHROPIC_CUSTOM_HEADERS` accepted by a live Claude Code session
+- [x] Routed-provider auth header and streaming client disconnect (which stops the upstream stream), both end to end
+- [ ] Still open: `ANTHROPIC_CUSTOM_HEADERS` accepted by a live Claude Code session
 - [ ] Manual: macOS/Linux `.vsix` install, `cache_read_input_tokens > 0` on turn 2, first CI run on GitHub
