@@ -3,8 +3,12 @@
 // undefined fields, and the caller falls back to the estimate.
 
 export interface UpstreamUsage {
+  // Total prompt tokens, cache reads and writes included
   inputTokens?: number;
   outputTokens?: number;
+  // The part of the prompt served from cache, and the part written to it (Anthropic)
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
 }
 
 function num(v: unknown): number | undefined {
@@ -18,6 +22,14 @@ function anthropicPromptTokens(u: Record<string, unknown>): number | undefined {
   const base = num(u.input_tokens);
   if (base === undefined) return undefined;
   return base + (num(u.cache_creation_input_tokens) ?? 0) + (num(u.cache_read_input_tokens) ?? 0);
+}
+
+// Applies the Anthropic cache counts from a usage object to the result
+function anthropicCache(u: Record<string, unknown>, out: UpstreamUsage): void {
+  const read = num(u.cache_read_input_tokens);
+  const write = num(u.cache_creation_input_tokens);
+  if (read !== undefined) out.cacheReadTokens = read;
+  if (write !== undefined) out.cacheWriteTokens = write;
 }
 
 export function readUpstreamUsage(
@@ -35,6 +47,7 @@ export function readUpstreamUsage(
     if (format === 'anthropic') {
       out.inputTokens = anthropicPromptTokens(u);
       out.outputTokens = num(u.output_tokens);
+      anthropicCache(u, out);
     } else {
       out.inputTokens = num(u.prompt_tokens);
       out.outputTokens = num(u.completion_tokens);
@@ -56,6 +69,7 @@ export function readUpstreamUsage(
     if (format === 'anthropic') {
       if (ev.type === 'message_start' && ev.message?.usage) {
         out.inputTokens = anthropicPromptTokens(ev.message.usage) ?? out.inputTokens;
+        anthropicCache(ev.message.usage, out);
       }
       if (ev.type === 'message_delta' && ev.usage) {
         out.outputTokens = num(ev.usage.output_tokens) ?? out.outputTokens;

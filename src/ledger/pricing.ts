@@ -16,7 +16,36 @@ const CACHE_MAX_AGE_MS  = 90 * 24 * 60 * 60 * 1000;   // discard cache older tha
 interface PriceEntry {
   promptPer1M: number;
   completionPer1M: number;
+  // Cache rates are optional: when absent, cached tokens are billed at the prompt rate
+  cacheReadPer1M?: number;
+  cacheWritePer1M?: number;
   fetchedAt: number;
+}
+
+export interface CacheTokens {
+  read?: number;
+  write?: number;
+}
+
+// Cost of one request. tokensIn is the total prompt, cache reads and writes included. Cached
+// tokens are charged at their own rates; the rest at the prompt rate.
+export function priceCost(
+  price: { promptPer1M: number; completionPer1M: number; cacheReadPer1M?: number; cacheWritePer1M?: number },
+  tokensIn: number,
+  tokensOut: number,
+  cache: CacheTokens = {}
+): number {
+  const read = Math.max(0, cache.read ?? 0);
+  const write = Math.max(0, cache.write ?? 0);
+  const plain = Math.max(0, tokensIn - read - write);
+  const readRate = price.cacheReadPer1M ?? price.promptPer1M;
+  const writeRate = price.cacheWritePer1M ?? price.promptPer1M;
+  return (
+    plain * price.promptPer1M +
+    read * readRate +
+    write * writeRate +
+    tokensOut * price.completionPer1M
+  ) / 1_000_000;
 }
 
 let priceCache: Map<string, PriceEntry> = new Map();
@@ -50,10 +79,10 @@ function lookupPrice(model: string): { promptPer1M: number; completionPer1M: num
   return best; // no data — caller should treat cost as unknown (0)
 }
 
-export function getCostUsd(model: string, tokensIn: number, tokensOut: number): number {
+export function getCostUsd(model: string, tokensIn: number, tokensOut: number, cache: CacheTokens = {}): number {
   const price = lookupPrice(model);
   if (!price) return 0;
-  return (tokensIn * price.promptPer1M + tokensOut * price.completionPer1M) / 1_000_000;
+  return priceCost(price, tokensIn, tokensOut, cache);
 }
 
 // ── cache persistence ─────────────────────────────────────────────────────────
@@ -68,7 +97,7 @@ function getCacheDir(): string | undefined {
 
 interface PricingJson {
   fetchedAt: number;
-  prices: Record<string, { promptPer1M: number; completionPer1M: number }>;
+  prices: Record<string, { promptPer1M: number; completionPer1M: number; cacheReadPer1M?: number; cacheWritePer1M?: number }>;
 }
 
 function loadCachedPrices(): void {
@@ -91,9 +120,14 @@ function loadCachedPrices(): void {
 function saveCachedPrices(): void {
   const dir = getCacheDir();
   if (!dir) return;
-  const prices: Record<string, { promptPer1M: number; completionPer1M: number }> = {};
+  const prices: PricingJson['prices'] = {};
   for (const [k, v] of priceCache) {
-    prices[k] = { promptPer1M: v.promptPer1M, completionPer1M: v.completionPer1M };
+    prices[k] = {
+      promptPer1M: v.promptPer1M,
+      completionPer1M: v.completionPer1M,
+      ...(v.cacheReadPer1M !== undefined ? { cacheReadPer1M: v.cacheReadPer1M } : {}),
+      ...(v.cacheWritePer1M !== undefined ? { cacheWritePer1M: v.cacheWritePer1M } : {}),
+    };
   }
   const data: PricingJson = { fetchedAt: Date.now(), prices };
   try {
@@ -120,15 +154,27 @@ function fetchOpenRouterPrices(apiKey: string): Promise<void> {
       res.on('end', () => {
         try {
           const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
-            data?: { id: string; pricing?: { prompt: string; completion: string } }[]
+            data?: { id: string; pricing?: { prompt: string; completion: string; input_cache_read?: string; input_cache_write?: string } }[]
+          };
+          // Per-token strings in the API; "-1" or anything unparseable means unknown
+          const perMillion = (raw: string | undefined): number | undefined => {
+            if (raw === undefined) return undefined;
+            const n = parseFloat(raw) * 1_000_000;
+            return !isNaN(n) && n >= 0 ? n : undefined;
           };
           for (const model of body.data ?? []) {
             if (!model.pricing) continue;
-            const promptPer1M     = parseFloat(model.pricing.prompt)     * 1_000_000;
-            const completionPer1M = parseFloat(model.pricing.completion) * 1_000_000;
+            const promptPer1M     = perMillion(model.pricing.prompt);
+            const completionPer1M = perMillion(model.pricing.completion);
             // OpenRouter reports -1 for variable-priced routers: that is "unknown", not a credit
-            if (!isNaN(promptPer1M) && !isNaN(completionPer1M) && promptPer1M >= 0 && completionPer1M >= 0) {
-              priceCache.set(model.id.toLowerCase(), { promptPer1M, completionPer1M, fetchedAt: Date.now() });
+            if (promptPer1M !== undefined && completionPer1M !== undefined) {
+              priceCache.set(model.id.toLowerCase(), {
+                promptPer1M,
+                completionPer1M,
+                cacheReadPer1M: perMillion(model.pricing.input_cache_read),
+                cacheWritePer1M: perMillion(model.pricing.input_cache_write),
+                fetchedAt: Date.now(),
+              });
             }
           }
           fetchedAt = Date.now();

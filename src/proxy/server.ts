@@ -516,7 +516,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
           model,
           tokensIn: billedIn,
           tokensOut,
-          costUsd: status === 200 ? getCostUsd(model, billedIn, tokensOut) : 0,
+          costUsd: status === 200 ? getCostUsd(model, billedIn, tokensOut, cacheOf(usage)) : 0,
           moduleActions: pipelineResult.moduleActions,
           cacheHit: false,
         });
@@ -578,7 +578,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       model: (pipelineResult.body as AnthropicRequest).model ?? 'unknown',
       tokensIn: billedIn,
       tokensOut,
-      costUsd: getCostUsd((pipelineResult.body as AnthropicRequest).model ?? '', billedIn, tokensOut),
+      costUsd: getCostUsd((pipelineResult.body as AnthropicRequest).model ?? '', billedIn, tokensOut, cacheOf(usage)),
       moduleActions: pipelineResult.moduleActions,
       cacheHit: false,
     });
@@ -750,6 +750,11 @@ function estimateStreamingTokensOut(sseBody: string, format: 'anthropic' | 'open
   }
   // Rough fallback: SSE overhead is significant so divide by more than plain JSON
   return Math.ceil(sseBody.length / 20);
+}
+
+// Cache counts from the provider's usage, in the shape the pricing code takes
+function cacheOf(usage: { cacheReadTokens?: number; cacheWriteTokens?: number }): { read?: number; write?: number } {
+  return { read: usage.cacheReadTokens, write: usage.cacheWriteTokens };
 }
 
 // Estimated cost of requests still in flight. Released when each response closes.

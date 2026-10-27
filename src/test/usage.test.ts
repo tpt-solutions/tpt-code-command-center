@@ -6,7 +6,12 @@ test('non-streamed Anthropic: input includes cache reads and writes', () => {
   const body = JSON.stringify({
     usage: { input_tokens: 10, cache_creation_input_tokens: 200, cache_read_input_tokens: 3000, output_tokens: 42 },
   });
-  assert.deepEqual(readUpstreamUsage(body, 'anthropic', false), { inputTokens: 3210, outputTokens: 42 });
+  assert.deepEqual(readUpstreamUsage(body, 'anthropic', false), {
+    inputTokens: 3210,
+    outputTokens: 42,
+    cacheReadTokens: 3000,
+    cacheWriteTokens: 200,
+  });
 });
 
 test('non-streamed OpenAI: prompt and completion tokens', () => {
@@ -49,6 +54,15 @@ test('streamed OpenAI: usage from the final chunk when the client asked for it',
 test('streamed OpenAI without usage: no counts, so the caller estimates', () => {
   const sse = 'data: {"choices":[{"delta":{"content":"a"}}]}\n\ndata: [DONE]';
   assert.deepEqual(readUpstreamUsage(sse, 'openai', true), {});
+});
+
+test('streamed Anthropic: cache counts come from message_start', () => {
+  const sse = 'data: {"type":"message_start","message":{"usage":{"input_tokens":4,"cache_read_input_tokens":900,"cache_creation_input_tokens":50}}}';
+  assert.deepEqual(readUpstreamUsage(sse, 'anthropic', true), {
+    inputTokens: 954,
+    cacheReadTokens: 900,
+    cacheWriteTokens: 50,
+  });
 });
 
 test('streamed: malformed events are skipped', () => {
