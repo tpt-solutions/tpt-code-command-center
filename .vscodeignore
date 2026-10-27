@@ -13,3 +13,5 @@ node_modules/**
 out/test/**
 TODO*.md
 spec.txt
+CLAUDE.md
+claude-compare.md
