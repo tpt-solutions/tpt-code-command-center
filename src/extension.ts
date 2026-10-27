@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { startProxyServer, stopProxyServer, getProxyUrl, getSessionToken, testProxyConnection } from './proxy/server';
 import { pickAndApplyPreset } from './ui/presets';
+import { runVault } from './modules/vault';
 import { createStatusBar, updateStatusBar, showToggleMenu, disposeStatusBar } from './ui/statusBar';
 import { showDashboard, refreshDashboard, disposeDashboard } from './ui/dashboard';
 import * as os from 'os';
@@ -163,6 +164,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('tpt.openSettings', () =>
       vscode.commands.executeCommand('workbench.action.openSettings', 'tpt')
     ),
+
+    vscode.commands.registerCommand('tpt.testVault', async () => {
+      // Runs the same redaction the proxy applies, on the selection or on typed text
+      const editor = vscode.window.activeTextEditor;
+      const selected = editor && !editor.selection.isEmpty ? editor.document.getText(editor.selection) : undefined;
+      const text = selected ?? await vscode.window.showInputBox({
+        prompt: 'Text to check against the Vault patterns',
+        ignoreFocusOut: true,
+      });
+      if (!text) return;
+
+      const result = runVault({ messages: [{ role: 'user', content: text }] }, getConfig().vault.customRegex);
+      const redacted = (result.body as { messages: Array<{ content: string }> }).messages[0].content;
+      const doc = await vscode.workspace.openTextDocument({ content: redacted, language: 'plaintext' });
+      await vscode.window.showTextDocument(doc, { preview: true });
+      vscode.window.showInformationMessage(`TPT: ${result.redacted} pattern match(es) redacted in the preview.`);
+    }),
 
     vscode.commands.registerCommand('tpt.copyClaudeCodeSnippet', async () => {
       const url = getProxyUrl();

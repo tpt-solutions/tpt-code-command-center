@@ -375,6 +375,10 @@
         "title": "TPT: Copy Claude Code Setup Snippet"
       },
       {
+        "command": "tpt.testVault",
+        "title": "TPT: Test Vault Patterns on Selection"
+      },
+      {
         "command": "tpt.browseForge",
         "title": "TPT: Browse Forge"
       },
