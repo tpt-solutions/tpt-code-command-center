@@ -19,6 +19,7 @@ import { showPromptDiff } from './ui/promptDiff';
 import { configureClineAuto } from './modules/clineConfig';
 import { runSetupWizard } from './ui/setupWizard';
 import { getConfig } from './utils/config';
+import { initConnectionState } from './utils/connection';
 
 function memoryFilePath(): string | undefined {
   const folders = vscode.workspace.workspaceFolders;
@@ -60,6 +61,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Persist ledger data even when no workspace folder is open
   setStoragePath(context.globalStorageUri.fsPath);
+  initConnectionState(context.globalState);
 
   // Point Smart Context at the bundled WASM files shipped inside the extension
   const wasmDir = require('path').join(context.extensionPath, 'media', 'wasm');
@@ -359,10 +361,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     log(`For Cline: set custom base URL to ${proxyUrl} and add the X-TPT-Token header (or run "TPT: Auto-Configure Cline").`);
   }
 
-  // Show channel automatically on first activation
-  const channel = getChannel();
-  channel.show(true);
-
+  // The Output Channel is available from the status bar and the commands; it is not
+  // opened on every activation (it would take focus from the editor each time)
   log('TPT Code Command Center activated.');
 }
 

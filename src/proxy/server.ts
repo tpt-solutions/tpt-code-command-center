@@ -15,6 +15,7 @@ import { countTokens, getTodayCostUsd, getThisMonthCostUsd } from '../ledger/led
 import { getCostUsd, initPricing } from '../ledger/pricing';
 import { captureRateLimitHeaders, recordActivity } from '../modules/quotaTracker';
 import { readUpstreamUsage } from '../ledger/usage';
+import { markConnected } from '../utils/connection';
 import { bearerToken, buildUpstreamPath, isAllowedPath, pathOnly, tokenMatches, upstreamRequestPath } from './requestPaths';
 
 const PREFERRED_PORT = 7331;
@@ -528,6 +529,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
           cacheHit: false,
         });
         if (status === 200) {
+          markConnected();
           if (config.silentEdit.enabled) {
             await handleSilentEditStreamResponse(accumulated, format);
           }
@@ -558,6 +560,8 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       sendErrorJson(res, 502, `Upstream request failed: ${e}`);
       return;
     }
+
+    if (forwarded.status === 200) markConnected();
 
     // Store under the same key Token Shield looked up with (the client's request, post-Vault).
     // Responses that call a tool are tied to this turn and are never reused.

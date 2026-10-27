@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { getStats, getModelBreakdown, getMonthlyStats, LedgerStats, ModelStat, MonthStat } from '../ledger/ledger';
 import { getProxyUrl } from '../proxy/server';
+import { hasConnected } from '../utils/connection';
 import { getConfig, resolveUpstreamUrl, workspaceRoots } from '../utils/config';
 import { getQuotaSnapshot, QuotaSnapshot } from '../modules/quotaTracker';
 import { weaveDashboardSnapshot, WeaveRepoStats, WeaveSessionStats } from '../modules/weave';
@@ -172,7 +173,7 @@ function buildHtml(
     &nbsp;|&nbsp; This month: <strong>$${thisMonthSpend.toFixed(4)}</strong>
   </div>
 
-  ${stats.totalRequests === 0 ? buildSetupGuideHtml(config, proxyUrl) : ''}
+  ${hasConnected() ? '' : buildSetupGuideHtml(config, proxyUrl)}
 
   <div class="savings-hero">
     <div class="savings-hero-title">✦ Estimated savings from TPT optimisation</div>
