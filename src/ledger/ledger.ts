@@ -92,6 +92,32 @@ function getTptDir(): string | undefined {
 
 // Writes to a temp file and renames it into place, so a crash mid-write cannot leave a
 // truncated ledger behind
+// Writing the whole database is expensive, so recordRequest marks it dirty and one write
+// happens shortly after. flushLedger writes immediately (used on deactivate).
+const PERSIST_DELAY_MS = 1000;
+let persistTimer: ReturnType<typeof setTimeout> | undefined;
+let persistPending = false;
+
+function schedulePersist(): void {
+  persistPending = true;
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = undefined;
+    flushLedger();
+  }, PERSIST_DELAY_MS);
+  persistTimer.unref();
+}
+
+export function flushLedger(): void {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = undefined;
+  }
+  if (!persistPending) return;
+  persistPending = false;
+  persistDb();
+}
+
 function persistDb(): void {
   if (!db) return;
   const tptDir = getTptDir();
@@ -122,7 +148,7 @@ export async function recordRequest(entry: LedgerEntry): Promise<void> {
     'INSERT INTO requests (ts, model, tokens_in, tokens_out, cost_usd, cache_hit, module_actions) VALUES (?,?,?,?,?,?,?)',
     [Date.now(), entry.model, entry.tokensIn, entry.tokensOut, entry.costUsd, entry.cacheHit ? 1 : 0, entry.moduleActions.join(',')]
   );
-  persistDb();
+  schedulePersist();
   _onRecord?.();
 }
 

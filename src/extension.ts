@@ -6,7 +6,7 @@ import { pickAndApplyPreset } from './ui/presets';
 import { createStatusBar, updateStatusBar, showToggleMenu, disposeStatusBar } from './ui/statusBar';
 import { showDashboard, refreshDashboard, disposeDashboard } from './ui/dashboard';
 import * as os from 'os';
-import { getStats, clearLedger, exportLedgerCsv, getMonthlyStats, setStoragePath, setOnRecordHook } from './ledger/ledger';
+import { getStats, clearLedger, exportLedgerCsv, getMonthlyStats, setStoragePath, setOnRecordHook, flushLedger } from './ledger/ledger';
 import { startQuotaPolling, stopQuotaPolling } from './modules/quotaTracker';
 import { clearCache } from './modules/tokenShield';
 import { browseForge } from './modules/forge';
@@ -347,6 +347,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function deactivate(): Promise<void> {
+  // Write any batched ledger rows before the window goes away
+  flushLedger();
   await stopProxyServer();
   stopQuotaPolling();
   disposeDashboard();
