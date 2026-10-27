@@ -28,8 +28,12 @@
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/PhillipC05/tpt-code-command-center"
+    "url": "https://github.com/tpt-solutions/tpt-code-command-center"
   },
+  "bugs": {
+    "url": "https://github.com/tpt-solutions/tpt-code-command-center/issues"
+  },
+  "homepage": "https://github.com/tpt-solutions/tpt-code-command-center#readme",
   "contributes": {
     "configuration": {
       "title": "TPT Code Command Center",
