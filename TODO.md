@@ -147,7 +147,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 
 ## Phase 12 — Adoption & Usability (Pending)
 
-- [ ] **Connect wizard** — provider + key, tool picker (Claude Code, Cline, Roo, Continue), "Test connection", preset choice; replace the dismissible toast with a VS Code `walkthroughs` contribution
+- [ ] **Connect wizard** — [x] provider and key, and a "Test connection" check at the end (the result shows in the message, with Open Settings on failure). [ ] Tool picker (Claude Code, Cline, Roo, Continue); [ ] preset choice inside the wizard; [ ] replace the dismissible toast with a VS Code `walkthroughs` contribution
 - [x] `TPT: Copy Session Token`, `TPT: Copy Claude Code Setup Snippet` (PowerShell + bash), `TPT: Test Connection` and `TPT: Open Settings` added; the 401 message names the copy command
 - [ ] Verify `tpt.configureCline` writes keys Cline actually reads; set the model name; reconcile `${url}` vs `${url}/v1` between docs and code
 - [ ] Refresh stale terminal env on port change; warn when existing terminals hold an old URL (env is now rewritten on every activation after bind; already-open terminals keep the old value)
@@ -160,7 +160,8 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [ ] Dashboard setup guide: show until Connect succeeds (not only `totalRequests === 0`); don't force-show Output Channel on every activation
 - [x] CI: `.github/workflows/ci.yml` runs lint, compile and tests on Ubuntu, Windows and macOS (not yet run on GitHub). [ ] Publish workflow; issue/PR templates (ask for `tpt.inspectLast` output)
 - [x] ESLint config added (`.eslintrc.json`); `npm run lint` passes. `test` lists all test files explicitly (a glob would need Node 21+)
-- [ ] `package.json`: real `publisher`, `license`, `bugs`, `homepage`, `galleryBanner`; `.vscodeignore` should exclude `CLAUDE.md` and `claude-compare.md`; drop redundant `download-wasm` in `vscode:prepublish` (WASM is tracked)
+- [x] `package.json` repository, bugs and homepage point at `tpt-solutions/tpt-code-command-center`. `.vscodeignore` excludes `CLAUDE.md` and `claude-compare.md` (check the `.vsix` contents once packaged)
+- [ ] `package.json`: real `publisher`, `license` (the `license` line is still uncommitted, pending the LICENSE change), `galleryBanner`; drop redundant `download-wasm` in `vscode:prepublish` (WASM is tracked)
 - [ ] Cut CHANGELOG `[Unreleased]` into 0.1.1 and bump version (needs a release decision)
 
 ## Phase 13 — Innovation Ideas (Backlog)
