@@ -144,6 +144,76 @@ export interface WeaveSkeletonSource {
   skeleton(relPath: string, rawBytes?: number): Promise<string | undefined>;
 }
 
+interface ToolCallInfo {
+  name?: string;
+  path?: string;
+}
+
+// Only results of file-reading tools are outlined. Bash output, search hits, test failures and
+// build logs must reach the model intact: an outline would hide the very error being debugged.
+const READ_TOOL_RE = /read|view|\bcat\b|open_file/i;
+
+function pathFromInput(input: unknown): string | undefined {
+  const i = input as Record<string, unknown> | undefined;
+  if (typeof i?.path === 'string') return i.path;
+  if (typeof i?.file_path === 'string') return i.file_path;
+  return undefined;
+}
+
+// Maps tool_use ids to the tool name and file path. A tool_result carries only the id, so the
+// path has to come from the assistant turn that issued the call (Anthropic tool_use blocks or
+// OpenAI tool_calls).
+function indexToolCalls(messages: Message[]): Map<string, ToolCallInfo> {
+  const index = new Map<string, ToolCallInfo>();
+  for (const msg of messages) {
+    if (!Array.isArray(msg.content) && !Array.isArray((msg as { tool_calls?: unknown }).tool_calls)) continue;
+
+    if (Array.isArray(msg.content)) {
+      for (const block of msg.content as ContentBlock[]) {
+        const b = block as unknown as Record<string, unknown>;
+        if (b.type === 'tool_use' && typeof b.id === 'string') {
+          index.set(b.id, { name: typeof b.name === 'string' ? b.name : undefined, path: pathFromInput(b.input) });
+        }
+      }
+    }
+
+    const toolCalls = (msg as unknown as { tool_calls?: unknown }).tool_calls;
+    if (Array.isArray(toolCalls)) {
+      for (const call of toolCalls as Array<Record<string, unknown>>) {
+        const fn = call.function as Record<string, unknown> | undefined;
+        if (typeof call.id !== 'string') continue;
+        let input: unknown;
+        try { input = JSON.parse(String(fn?.arguments ?? '{}')); } catch { input = undefined; }
+        index.set(call.id, { name: typeof fn?.name === 'string' ? fn.name : undefined, path: pathFromInput(input) });
+      }
+    }
+  }
+  return index;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function freeTree(tree: any): void {
+  if (typeof tree?.delete === 'function') tree.delete();
+}
+
+async function outlineFor(content: string, toolPath: string | undefined): Promise<string> {
+  const ext = getFileExtension(content, toolPath);
+  if (!ext) return extractOutlineFromText(content);
+
+  const parser = await getParser(ext);
+  if (!parser) return extractOutlineFromText(content);
+
+  let tree;
+  try {
+    tree = parser.parse(content);
+    return extractOutlineWithParser(tree, content);
+  } catch {
+    return extractOutlineFromText(content);
+  } finally {
+    freeTree(tree);
+  }
+}
+
 export async function runSmartContext(
   messages: Message[],
   maxFileSize: number,
@@ -151,58 +221,55 @@ export async function runSmartContext(
 ): Promise<SmartContextResult> {
   let replaced = 0;
   let weaveReplaced = 0;
+  const toolCalls = indexToolCalls(messages);
+
+  // Replaces one tool result's text when it is a large read of a file. Returns undefined to keep it.
+  async function replaceResult(toolUseId: unknown, content: string): Promise<string | undefined> {
+    if (Buffer.byteLength(content) <= maxFileSize) return undefined;
+
+    const call = typeof toolUseId === 'string' ? toolCalls.get(toolUseId) : undefined;
+    if (!call || !call.name || !READ_TOOL_RE.test(call.name)) return undefined;
+
+    const toolPath = call.path;
+
+    // tpt-weave-indexed Rust files: skeleton from the shared index
+    // (no duplicate parsing here; falls back on any miss/failure).
+    if (weave && toolPath && toolPath.replace(/\\/g, '/').endsWith('.rs')) {
+      const skeleton = await weave.skeleton(toolPath, Buffer.byteLength(content));
+      if (skeleton) {
+        weaveReplaced++;
+        return skeleton;
+      }
+    }
+
+    return outlineFor(content, toolPath);
+  }
 
   const processedMessages = await Promise.all(
     messages.map(async (msg): Promise<Message> => {
+      // OpenAI: each tool result is its own message with a string body
+      if (msg.role === 'tool' && typeof msg.content === 'string') {
+        const toolCallId = (msg as unknown as { tool_call_id?: unknown }).tool_call_id;
+        const outline = await replaceResult(toolCallId, msg.content);
+        if (outline === undefined) return msg;
+        replaced++;
+        return { ...msg, content: outline };
+      }
+
       if (!Array.isArray(msg.content)) return msg;
 
       const processedContent = await Promise.all(
         (msg.content as ContentBlock[]).map(async (block): Promise<ContentBlock> => {
           if (block.type !== 'tool_result') return block;
 
-          const blockRecord = block as Record<string, unknown>;
+          const blockRecord = block as unknown as Record<string, unknown>;
           const content = blockRecord.content;
           if (typeof content !== 'string') return block;
-          if (Buffer.byteLength(content) <= maxFileSize) return block;
 
-          // Prefer explicit path from the tool input (Cline/Claude pass it as tool_use input.path)
-          const toolPath = typeof blockRecord.path === 'string' ? blockRecord.path
-            : typeof (blockRecord.input as Record<string, unknown> | undefined)?.path === 'string'
-              ? (blockRecord.input as Record<string, string>).path
-              : undefined;
-
-          // tpt-weave-indexed Rust files: skeleton from the shared index
-          // (no duplicate parsing here; falls back on any miss/failure).
-          if (weave && toolPath && toolPath.replace(/\\/g, '/').endsWith('.rs')) {
-            const skeleton = await weave.skeleton(toolPath, Buffer.byteLength(content));
-            if (skeleton) {
-              replaced++;
-              weaveReplaced++;
-              return { ...block, content: skeleton };
-            }
-          }
-
-          const ext = getFileExtension(content, toolPath);
-          let outline: string;
-
-          if (ext) {
-            const parser = await getParser(ext);
-            if (parser) {
-              try {
-                const tree = parser.parse(content);
-                outline = extractOutlineWithParser(tree, content);
-              } catch {
-                outline = extractOutlineFromText(content);
-              }
-            } else {
-              outline = extractOutlineFromText(content);
-            }
-          } else {
-            outline = extractOutlineFromText(content);
-          }
-
+          const outline = await replaceResult(blockRecord.tool_use_id, content);
+          if (outline === undefined) return block;
           replaced++;
-          return { ...block, content: outline };
+          return { ...block, content: outline } as ContentBlock;
         })
       );
 

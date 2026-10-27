@@ -84,7 +84,9 @@ function toPosix(p: string): string {
 
 function isInside(root: string, candidate: string): boolean {
   const rel = path.relative(root, candidate);
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+  // Only a leading ".." segment escapes the root; "..config" is an ordinary name
+  const escapes = rel === '..' || rel.startsWith('..' + path.sep);
+  return rel !== '' && !escapes && !path.isAbsolute(rel);
 }
 
 export function createWeaveQuery(opts: {
@@ -124,7 +126,10 @@ export function createWeaveQuery(opts: {
     if (path.isAbsolute(relPath)) return findRoot(relPath);
     for (const root of roots) {
       try {
-        if (fs.existsSync(path.join(root, cleaned))) return { root, rel: cleaned };
+        // A relative path such as "../../etc/x" must not reach a file outside the root
+        const full = path.resolve(root, cleaned);
+        if (!isInside(root, full)) continue;
+        if (fs.existsSync(full)) return { root, rel: toPosix(path.relative(root, full)) };
       } catch {
         // unreachable root — try the next one
       }

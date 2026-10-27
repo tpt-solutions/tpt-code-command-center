@@ -86,16 +86,17 @@ test('createWeaveQuery: unknown files and CLI failures fall back (undefined)', a
 
 // ── runSmartContext × weave ───────────────────────────────────────────────────
 
-function toolResult(content: string, toolPath: string): Message {
-  return {
-    role: 'user',
-    content: [{ type: 'tool_result', content, path: toolPath }],
-  };
+// A file read as the API sends it: the assistant's tool_use, then the tool_result that answers it
+function readTurn(content: string, toolPath: string, toolName = 'read_file'): Message[] {
+  return [
+    { role: 'assistant', content: [{ type: 'tool_use', id: 'call_1', name: toolName, input: { path: toolPath } }] } as unknown as Message,
+    { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'call_1', content }] } as unknown as Message,
+  ];
 }
 
 test('runSmartContext: .rs tool results prefer the weave skeleton', async () => {
   const raw = 'x'.repeat(600_000);
-  const messages: Message[] = [toolResult(raw, 'src/lib.rs')];
+  const messages: Message[] = readTurn(raw, 'src/lib.rs');
   const skeletonsServed: Array<string | undefined> = [];
   const result = await runSmartContext(messages, 512_000, {
     skeleton: async (rel, rawBytes) => {
@@ -107,7 +108,7 @@ test('runSmartContext: .rs tool results prefer the weave skeleton', async () => 
   });
   assert.equal(result.replaced, 1);
   assert.equal(result.weaveReplaced, 1);
-  const block = (result.messages[0].content as Array<Record<string, unknown>>)[0];
+  const block = (result.messages[1].content as Array<Record<string, unknown>>)[0];
   assert.equal(block.content, '[weave skeleton]');
   assert.deepEqual(skeletonsServed, ['src/lib.rs']);
 });
@@ -115,19 +116,19 @@ test('runSmartContext: .rs tool results prefer the weave skeleton', async () => 
 test('runSmartContext: weave miss falls back to the built-in outline', async () => {
   // >512KB so the size gate lets it through to outlining
   const lines = Array.from({ length: 40_000 }, (_, i) => `pub fn filler_${i}() {}`).join('\n');
-  const messages: Message[] = [toolResult(lines, 'src/big.rs')];
+  const messages: Message[] = readTurn(lines, 'src/big.rs');
   const result = await runSmartContext(messages, 512_000, {
     skeleton: async () => undefined,
   });
   assert.equal(result.replaced, 1);
   assert.equal(result.weaveReplaced, 0);
-  const block = (result.messages[0].content as Array<Record<string, unknown>>)[0];
+  const block = (result.messages[1].content as Array<Record<string, unknown>>)[0];
   assert.ok(String(block.content).startsWith('[AST Outline'), String(block.content).slice(0, 40));
 });
 
 test('runSmartContext: non-Rust files skip weave entirely', async () => {
   const js = Array.from({ length: 30_000 }, (_, i) => `const v${i} = ${i};`).join('\n');
-  const messages: Message[] = [toolResult(js, 'src/app.js')];
+  const messages: Message[] = readTurn(js, 'src/app.js');
   let weaveCalls = 0;
   const result = await runSmartContext(messages, 512_000, {
     skeleton: async () => {
@@ -138,6 +139,26 @@ test('runSmartContext: non-Rust files skip weave entirely', async () => {
   assert.equal(weaveCalls, 0);
   assert.equal(result.weaveReplaced, 0);
   assert.equal(result.replaced, 1);
+});
+
+test('runSmartContext: output of a non-read tool (bash) is never outlined', async () => {
+  const log = Array.from({ length: 30_000 }, (_, i) => `build step ${i}: ok`).join('\n');
+  const messages: Message[] = readTurn(log, 'build.log', 'bash');
+  const result = await runSmartContext(messages, 512_000);
+  assert.equal(result.replaced, 0);
+  const block = (result.messages[1].content as Array<Record<string, unknown>>)[0];
+  assert.equal(block.content, log);
+});
+
+test('runSmartContext: an OpenAI tool message from a read is outlined via its tool_calls', async () => {
+  const src = Array.from({ length: 30_000 }, (_, i) => `export function f${i}() {}`).join('\n');
+  const messages = [
+    { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":"src/app.ts"}' } }] },
+    { role: 'tool', tool_call_id: 'c1', content: src },
+  ] as unknown as Message[];
+  const result = await runSmartContext(messages, 512_000);
+  assert.equal(result.replaced, 1);
+  assert.ok(String(result.messages[1].content).startsWith('[AST Outline'));
 });
 
 // ── session stats ─────────────────────────────────────────────────────────────
