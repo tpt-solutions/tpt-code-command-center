@@ -19,7 +19,7 @@ export interface ForgeEntry {
   sha256?: string;
 }
 
-const BUILTIN_FORGE_ENTRIES: ForgeEntry[] = [
+export const BUILTIN_FORGE_ENTRIES: ForgeEntry[] = [
   {
     name: 'default-router-rules',
     description: 'Comprehensive TPT Router ruleset — routes short/simple prompts to cheaper models and code, debugging, and security contexts to capable models',
