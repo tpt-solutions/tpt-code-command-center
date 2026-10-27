@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { AnthropicRequest, OpenAIRequest } from '../proxy/types';
 import type { Database } from 'sql.js';
+import { log } from '../utils/logger';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let initSqlJs: (config?: any) => Promise<any>;
@@ -14,7 +15,20 @@ export function setOnRecordHook(fn: () => void): void { _onRecord = fn; }
 let _storageUri: string | undefined;
 export function setStoragePath(uri: string): void { _storageUri = uri; }
 
-async function getDb(): Promise<Database> {
+let dbReady: Promise<Database> | undefined;
+
+// Shared promise so concurrent first requests don't each open (and overwrite) the database
+function getDb(): Promise<Database> {
+  if (!dbReady) {
+    dbReady = openDb().catch((e) => {
+      dbReady = undefined;
+      throw e;
+    });
+  }
+  return dbReady;
+}
+
+async function openDb(): Promise<Database> {
   if (db) return db;
 
   if (!initSqlJs) {
@@ -54,27 +68,43 @@ async function getDb(): Promise<Database> {
   return db!;
 }
 
+// Returns undefined (and the ledger stays in memory) when the folder cannot be created,
+// for example a read-only or virtual workspace; requests must still be served.
+function ensureDir(dir: string): string | undefined {
+  try {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  } catch {
+    return undefined;
+  }
+}
+
 function getTptDir(): string | undefined {
   const folders = vscode.workspace.workspaceFolders;
   if (folders?.length) {
-    const dir = path.join(folders[0].uri.fsPath, '.tpt');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    return dir;
+    return ensureDir(path.join(folders[0].uri.fsPath, '.tpt'));
   }
   if (_storageUri) {
-    if (!fs.existsSync(_storageUri)) fs.mkdirSync(_storageUri, { recursive: true });
-    return _storageUri;
+    return ensureDir(_storageUri);
   }
   return undefined;
 }
 
+// Writes to a temp file and renames it into place, so a crash mid-write cannot leave a
+// truncated ledger behind
 function persistDb(): void {
   if (!db) return;
   const tptDir = getTptDir();
   if (!tptDir) return;
   const dbPath = path.join(tptDir, 'ledger.db');
-  const data = db.export();
-  fs.writeFileSync(dbPath, Buffer.from(data));
+  const tmpPath = `${dbPath}.tmp`;
+  try {
+    fs.writeFileSync(tmpPath, Buffer.from(db.export()));
+    fs.renameSync(tmpPath, dbPath);
+  } catch (e) {
+    // Persisting is best-effort; the in-memory ledger keeps counting
+    log(`Ledger: could not persist ${dbPath}: ${e}`);
+  }
 }
 
 export interface LedgerEntry {
@@ -211,6 +241,7 @@ export async function getThisMonthCostUsd(): Promise<number> {
 
 export interface MonthStat {
   month: string;
+  requests: number;
   tokensIn: number;
   tokensOut: number;
   costUsd: number;
@@ -227,8 +258,13 @@ export async function getMonthlyStats(months = 12): Promise<MonthStat[]> {
        strftime('%Y-%m', ts/1000, 'unixepoch') as m,
        SUM(tokens_in), SUM(tokens_out), SUM(cost_usd),
        SUM(cache_hit), COUNT(*),
-       CASE WHEN COUNT(*) > 0 THEN SUM(cost_usd) / COUNT(*) ELSE 0 END as avg_cost,
-       CASE WHEN COUNT(*) > 0 THEN SUM(tokens_in) / COUNT(*) ELSE 0 END as avg_tok_in
+       -- Averages are over real upstream calls only: cache hits cost 0 and would drag the
+       -- average down. REAL division avoids SQLite truncating integer averages.
+       CASE WHEN COUNT(*) - SUM(cache_hit) > 0
+         THEN SUM(cost_usd) / CAST(COUNT(*) - SUM(cache_hit) AS REAL) ELSE 0 END as avg_cost,
+       CASE WHEN COUNT(*) - SUM(cache_hit) > 0
+         THEN CAST(SUM(CASE WHEN cache_hit = 0 THEN tokens_in ELSE 0 END) AS REAL)
+              / CAST(COUNT(*) - SUM(cache_hit) AS REAL) ELSE 0 END as avg_tok_in
      FROM requests WHERE ts >= ?
      GROUP BY m ORDER BY m DESC LIMIT ?`,
     [cutoff, months]
@@ -240,6 +276,7 @@ export async function getMonthlyStats(months = 12): Promise<MonthStat[]> {
     const avgTokIn = Number(r[7]);
     return {
       month: String(r[0]),
+      requests: Number(r[5]),
       tokensIn: Number(r[1]),
       tokensOut: Number(r[2]),
       costUsd: Number(r[3]),
@@ -256,6 +293,15 @@ export async function clearLedger(): Promise<void> {
   persistDb();
 }
 
+// Quotes a text field for CSV. Cells starting with = + - @ are prefixed with ' so that
+// spreadsheet apps don't evaluate them as formulas (model names and module actions are
+// not fully trusted content).
+export function csvField(value: unknown): string {
+  let s = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
 export async function exportLedgerCsv(): Promise<string> {
   const database = await getDb();
   const rows = database.exec(
@@ -266,7 +312,7 @@ export async function exportLedgerCsv(): Promise<string> {
   const lines = (rows[0]?.values ?? []).map((r) => {
     const ts = Number(r[0]);
     const date = new Date(ts).toISOString();
-    return [ts, date, `"${r[1]}"`, r[2], r[3], Number(r[4]).toFixed(8), r[5], `"${r[6]}"`].join(',');
+    return [ts, date, csvField(r[1]), r[2], r[3], Number(r[4]).toFixed(8), r[5], csvField(r[6])].join(',');
   });
   return header + lines.join('\n');
 }

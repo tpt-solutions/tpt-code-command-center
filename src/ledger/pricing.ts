@@ -25,18 +25,29 @@ let fetchedAt = 0;
 
 // Fuzzy lookup in the live/cached price map only — no hardcoded fallbacks.
 function lookupPrice(model: string): { promptPer1M: number; completionPer1M: number } | undefined {
-  const m = model.toLowerCase();
+  const m = model.toLowerCase().trim();
+  if (!m) return undefined; // a missing model name must not match the first table entry
 
   // Exact cache hit
   const exact = priceCache.get(m);
   if (exact) return exact;
 
-  // Prefix / substring match in live cache
+  // OpenRouter ids are "vendor/model"; clients send the bare name, sometimes with a date
+  // suffix ("claude-sonnet-4-20250514"). Match the bare name, and prefer the longest match
+  // so "gpt-4o-mini" never gets the price of "gpt-4o".
+  let best: PriceEntry | undefined;
+  let bestLen = -1;
   for (const [key, entry] of priceCache) {
-    if (m.includes(key) || key.includes(m)) return entry;
+    const tail = key.split('/').pop() ?? key;
+    // Only a dated snapshot suffix ("-20250514") counts as the same model
+    const matches = m === tail || (m.startsWith(tail + '-') && /^\d{8}$/.test(m.slice(tail.length + 1)));
+    if (matches && tail.length > bestLen) {
+      best = entry;
+      bestLen = tail.length;
+    }
   }
 
-  return undefined; // no data — caller should treat cost as unknown (0)
+  return best; // no data — caller should treat cost as unknown (0)
 }
 
 export function getCostUsd(model: string, tokensIn: number, tokensOut: number): number {
@@ -115,7 +126,8 @@ function fetchOpenRouterPrices(apiKey: string): Promise<void> {
             if (!model.pricing) continue;
             const promptPer1M     = parseFloat(model.pricing.prompt)     * 1_000_000;
             const completionPer1M = parseFloat(model.pricing.completion) * 1_000_000;
-            if (!isNaN(promptPer1M) && !isNaN(completionPer1M)) {
+            // OpenRouter reports -1 for variable-priced routers: that is "unknown", not a credit
+            if (!isNaN(promptPer1M) && !isNaN(completionPer1M) && promptPer1M >= 0 && completionPer1M >= 0) {
               priceCache.set(model.id.toLowerCase(), { promptPer1M, completionPer1M, fetchedAt: Date.now() });
             }
           }
@@ -143,9 +155,4 @@ export async function initPricing(openrouterApiKey: string): Promise<void> {
   if (openrouterApiKey) {
     await fetchOpenRouterPrices(openrouterApiKey);
   }
-}
-
-/** Returns today's total spend from the in-memory ledger snapshot (USD). */
-export function getDailySpendUsd(costUsdToday: number): number {
-  return costUsdToday;
 }
