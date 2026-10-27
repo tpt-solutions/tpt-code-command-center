@@ -39,6 +39,29 @@ TPT_TOKEN=... ./examples/smoke-test.sh
 
 Expected: `proxy answered HTTP 200`. If it's `401`, the token is stale: copy it again. If it's `502` or the upstream returns `401`, the provider key is missing or wrong for the upstream in `tpt.upstreamProvider`. **TPT: Test Connection** reports the same thing without a terminal.
 
+## Using an OpenAI-compatible provider
+
+Claude Code speaks Anthropic's format. A router rule can send its requests to an OpenAI-compatible provider (Groq, Gemini, DeepSeek, OpenRouter and others), and TPT converts the request and the answer between the two formats:
+
+```json
+{
+  "tpt.router.enabled": true,
+  "tpt.router.rules": [
+    { "match": { "maxTokens": 2000 }, "model": "llama-3.3-70b-versatile", "provider": "groq" }
+  ]
+}
+```
+
+Converted: system prompts, text and images, tool definitions and tool use and results, and both streamed text and streamed tool calls.
+
+Limits:
+
+- The rule's `model` is the provider's model name, not a Claude name.
+- Only `/v1/messages` is converted. `count_tokens` returns 404 on a routed request.
+- Anthropic-only features (thinking blocks, prompt caching markers, citations) are dropped.
+- A request no rule matches goes to the global provider unchanged.
+- Requests from OpenAI-format clients are not converted to Anthropic. A rule that would do that is skipped.
+
 ## Notes
 
 - Claude Code is in Anthropic format. Router rules that send Claude requests to an OpenAI-compatible provider are skipped, because the request body is not translated. Use an `anthropic`-provider rule (see [router-anthropic-tiering.json](router-anthropic-tiering.json)) or leave the router off.
