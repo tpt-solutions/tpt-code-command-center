@@ -97,7 +97,7 @@
 - [x] Added Mistral (`https://api.mistral.ai/v1`) as a supported `tpt.upstreamProvider` value — OpenAI-compatible with Bearer auth. Unlike GLM/MiMo, Mistral has **no automatic caching**: it requires a stable `prompt_cache_key` on requests sharing a prefix (64-token minimum cache block). Added `runMistralCacheKey` in `promptCache.ts`, wired into `pipeline.ts` as step 5.6, sets the key from the conversation's first message hash — same pattern as the Grok conv-id header
 - [x] Setup wizard (`src/ui/setupWizard.ts`) updated — now offers all nine hosted providers (deepseek, qwen, kimi, grok, glm, mimo, mistral added alongside the original openrouter/anthropic/openai), not just five
 - [ ] Manual verification pending: run a real multi-turn Anthropic conversation through the proxy with `tpt.terminal.verboseLogging` on and confirm `cache_read_input_tokens > 0` in the upstream response `usage` object on turn 2+ (unit tests only prove the markers are placed correctly, not that Anthropic honors them). Same verification needed for Mistral's `prompt_cache_key` — check the response `usage` object for a cache-hit field once a real key is available
-- [ ] Groq and Google Gemini are strong next candidates (see chat) — both OpenAI-compatible, both cache automatically, neither added yet pending user confirmation
+- [x] Groq and Google Gemini added as `tpt.upstreamProvider` values (Groq `api.groq.com/openai/v1`, Gemini `generativelanguage.googleapis.com/v1beta/openai`), with their own key settings and a path rule for Gemini
 
 ## Phase 11 — Review Findings: Bugs & Security (In progress)
 
@@ -158,7 +158,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [ ] README sync with `package.json`: missing commands (`configureModels`, `inspectLast`, `showPromptDiff`, `exportLedger`, `configureCline`, `runSetupWizard`, `resetSetup`, `exportMonthlySummary`) and settings (`costBudget.*`, `tokenShield.semanticCache.*`, `forge.registryUrl`, memoryWeaver models, per-provider keys); add Troubleshooting (401, port, stale terminal) and FAQ; link `examples/`
 - [ ] Link `claude-compare.md` from README; replace estimates with measured numbers
 - [ ] Surprising defaults: document that Router/Silent Edit are off and that routing to a different provider needs that provider's key; Forge `autoUpdate` makes network calls by default — add consent/privacy note
-- [ ] Dashboard setup guide: show until Connect succeeds (not only `totalRequests === 0`); don't force-show Output Channel on every activation
+- [x] Dashboard setup guide stays until the first real upstream answer (persisted as `tpt.connected`); the Output Channel no longer opens on every activation
 - [x] CI: `.github/workflows/ci.yml` runs lint, compile and tests on Ubuntu, Windows and macOS (not yet run on GitHub). [ ] Publish workflow; issue/PR templates (ask for `tpt.inspectLast` output)
 - [x] ESLint config added (`.eslintrc.json`); `npm run lint` passes. `test` lists all test files explicitly (a glob would need Node 21+)
 - [x] `package.json` repository, bugs and homepage point at `tpt-solutions/tpt-code-command-center`. `.vscodeignore` excludes `CLAUDE.md` and `claude-compare.md` (check the `.vsix` contents once packaged)
@@ -176,7 +176,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [x] Vault preview: `TPT: Test Vault Patterns on Selection` shows the redacted text for the selection or typed input
 - [ ] Anonymous opt-in adoption metrics (currently zero telemetry, so adoption can't be measured)
 - [ ] Cross-format routing — translate request/response between Anthropic Messages and OpenAI chat formats so routes can cross providers
-- [ ] Groq and Google Gemini providers (supersedes the open Phase 10 item)
+- [x] Groq and Google Gemini providers (done, see Phase 10)
 
 ## Phase 14 — Test Coverage Gaps (In progress)
 
@@ -187,7 +187,7 @@ Automated: `npm run compile` clean; `npm test` 164/164 passing; `npm run lint` c
 - [x] Memory Weaver: `pairSafeTail` and extractive pairing (`memoryWeaver.test.ts`). [ ] Threshold and summariser backends
 - [x] Smart Context: read-only replacement, OpenAI `tool` messages, size threshold (`weave.test.ts`). [ ] Outline correctness for each language
 - [x] Silent Edit: path containment, range validation (`editSafety.test.ts`), block parsing (`silentEditParse.test.ts`). [ ] `applyEdit` behaviour
-- [ ] Forge: built-in regex validity
+- [x] Forge: built-in regex validity (`forgeBuiltins.test.ts`): every vault pattern compiles and passes the ReDoS guard; every router rule names a real provider
 - [x] Vault: Bearer, array `tool_result`, `tool_use` input, `tool_calls`, PEM blocks, large blocks, `(?i)` custom patterns, ReDoS guard (`vaultExtended.test.ts`). [ ] Redaction count
 - [x] Prompt Cache: existing `cache_control`, thinking blocks, breakpoint limit (`promptCacheLimits.test.ts`)
 - [x] Presets: every key is a declared setting (`presets.test.ts`)
