@@ -70,16 +70,40 @@ function getTptDir(): string | undefined {
   return dir;
 }
 
+const FORGE_FETCH_TIMEOUT_MS = 10_000;
+const FORGE_MAX_BYTES = 5 * 1024 * 1024;
+
+// Registry content is untrusted input: https only, bounded time and size, and a non-200
+// answer is an error rather than something to parse.
 function fetchJson(url: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    https.get(url, { headers: { 'user-agent': 'tpt-code-command-center/0.1.0' } }, (res) => {
+    if (!url.startsWith('https://')) {
+      reject(new Error(`Forge registry must use https (got ${url})`));
+      return;
+    }
+    const req = https.get(url, { headers: { 'user-agent': 'tpt-code-command-center/0.1.0' } }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume();
+        reject(new Error(`Forge registry answered HTTP ${res.statusCode}`));
+        return;
+      }
       const chunks: Buffer[] = [];
-      res.on('data', (c: Buffer) => chunks.push(c));
+      let total = 0;
+      res.on('data', (c: Buffer) => {
+        total += c.length;
+        if (total > FORGE_MAX_BYTES) {
+          req.destroy(new Error('Forge registry response too large'));
+          return;
+        }
+        chunks.push(c);
+      });
       res.on('end', () => {
         try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
         catch (e) { reject(e); }
       });
-    }).on('error', reject);
+    });
+    req.setTimeout(FORGE_FETCH_TIMEOUT_MS, () => req.destroy(new Error('Forge registry timed out')));
+    req.on('error', reject);
   });
 }
 
