@@ -6,6 +6,8 @@ Copy-paste setups for the tools TPT works with. Start with the one you use.
 |---|---|
 | Claude Code (CLI or VS Code) | [claude-code.md](claude-code.md) |
 | Cline (OpenAI-compatible provider) | [cline.md](cline.md) |
+| Roo Code (OpenAI Compatible provider) | [roo-code.md](roo-code.md) |
+| Continue (`config.yaml`) | [continue.md](continue.md) |
 | Ollama or LM Studio on this machine | [local-models.md](local-models.md) |
 
 Config files you can drop in:
