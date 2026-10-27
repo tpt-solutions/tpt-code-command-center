@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { startProxyServer, stopProxyServer, getProxyUrl, getSessionToken } from './proxy/server';
+import { startProxyServer, stopProxyServer, getProxyUrl, getSessionToken, testProxyConnection } from './proxy/server';
+import { pickAndApplyPreset } from './ui/presets';
 import { createStatusBar, updateStatusBar, showToggleMenu, disposeStatusBar } from './ui/statusBar';
 import { showDashboard, refreshDashboard, disposeDashboard } from './ui/dashboard';
 import * as os from 'os';
@@ -17,6 +18,12 @@ import { showPromptDiff } from './ui/promptDiff';
 import { configureClineAuto } from './modules/clineConfig';
 import { runSetupWizard } from './ui/setupWizard';
 import { getConfig } from './utils/config';
+
+function memoryFilePath(): string | undefined {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders?.length) return undefined;
+  return path.join(folders[0].uri.fsPath, '.tpt', 'memory.json');
+}
 
 function checkGitignore(context: vscode.ExtensionContext): void {
   const folders = vscode.workspace.workspaceFolders;
@@ -63,28 +70,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Guard against accidental API key commits
   checkGitignore(context);
-
-  // Start proxy server — update status bar on completion or failure
-  try {
-    await startProxyServer(context);
-    updateStatusBar();
-    startQuotaPolling(getConfig());
-    setOnRecordHook(() => {
-      refreshDashboard();
-      updateStatusBar();
-    });
-  } catch (err) {
-    updateStatusBar();
-    const msg = err instanceof Error ? err.message : String(err);
-    log(`TPT proxy failed to start: ${msg}`);
-    vscode.window.showErrorMessage(
-      `TPT proxy failed to start: ${msg}`,
-      'Show Output'
-    ).then((choice) => {
-      if (choice === 'Show Output') getChannel().show(true);
-    });
-    return;
-  }
 
   // First-run: offer setup wizard if no API key is configured
   const cfg = vscode.workspace.getConfiguration('tpt');
@@ -139,8 +124,64 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.window.showInformationMessage('TPT: Token Shield cache cleared.');
     }),
 
-    vscode.commands.registerCommand('tpt.pruneMemory', () => {
-      vscode.window.showInformationMessage('TPT: Memory Weaver will summarise on the next request that exceeds the threshold.');
+    vscode.commands.registerCommand('tpt.pruneMemory', async () => {
+      const memPath = memoryFilePath();
+      if (!memPath || !fs.existsSync(memPath)) {
+        vscode.window.showInformationMessage('TPT: there is no Memory Weaver history to clear.');
+        return;
+      }
+      const confirm = await vscode.window.showWarningMessage(
+        'Clear the Memory Weaver summary history for this workspace?', { modal: true }, 'Clear'
+      );
+      if (confirm !== 'Clear') return;
+      fs.unlinkSync(memPath);
+      vscode.window.showInformationMessage('TPT: Memory Weaver history cleared.');
+    }),
+
+    vscode.commands.registerCommand('tpt.clearLedger', async () => {
+      const confirm = await vscode.window.showWarningMessage(
+        'Delete all recorded requests from the TPT ledger? This cannot be undone.', { modal: true }, 'Delete'
+      );
+      if (confirm !== 'Delete') return;
+      await clearLedger();
+      refreshDashboard();
+      updateStatusBar();
+      vscode.window.showInformationMessage('TPT: ledger cleared.');
+    }),
+
+    vscode.commands.registerCommand('tpt.applyPreset', () => pickAndApplyPreset()),
+
+    vscode.commands.registerCommand('tpt.testConnection', async () => {
+      const result = await testProxyConnection();
+      if (result.ok) {
+        vscode.window.showInformationMessage(`TPT: ${result.message}`);
+      } else {
+        vscode.window.showWarningMessage(`TPT: ${result.message}`);
+      }
+    }),
+
+    vscode.commands.registerCommand('tpt.openSettings', () =>
+      vscode.commands.executeCommand('workbench.action.openSettings', 'tpt')
+    ),
+
+    vscode.commands.registerCommand('tpt.copyClaudeCodeSnippet', async () => {
+      const url = getProxyUrl();
+      const token = getSessionToken();
+      if (!url || !token) {
+        vscode.window.showWarningMessage('TPT proxy is not running yet.');
+        return;
+      }
+      const snippet =
+        `# PowerShell\n` +
+        `$env:ANTHROPIC_BASE_URL="${url}"\n` +
+        `$env:ANTHROPIC_CUSTOM_HEADERS="X-TPT-Token: ${token}"\n\n` +
+        `# bash / zsh\n` +
+        `export ANTHROPIC_BASE_URL="${url}"\n` +
+        `export ANTHROPIC_CUSTOM_HEADERS="X-TPT-Token: ${token}"\n`;
+      await vscode.env.clipboard.writeText(snippet);
+      vscode.window.showInformationMessage(
+        'TPT: Claude Code environment variables copied. Paste them into a terminal, then run claude.'
+      );
     }),
 
     vscode.commands.registerCommand('tpt.browseForge', () => browseForge()),
@@ -204,13 +245,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
 
+    vscode.commands.registerCommand('tpt.copySessionToken', async () => {
+      const token = getSessionToken();
+      if (!token) {
+        vscode.window.showWarningMessage('TPT proxy is not running yet.');
+        return;
+      }
+      await vscode.env.clipboard.writeText(token);
+      vscode.window.showInformationMessage(
+        'TPT session token copied. Send it as the X-TPT-Token header. ' +
+        'Terminals opened in this workspace already set ANTHROPIC_CUSTOM_HEADERS for Claude Code.'
+      );
+    }),
+
     vscode.commands.registerCommand('tpt.runSetupWizard', () => runSetupWizard(context)),
 
     vscode.commands.registerCommand('tpt.exportMonthlySummary', async () => {
-      const [monthlyStats, stats] = await Promise.all([getMonthlyStats(12), getStats()]);
+      const monthlyStats = await getMonthlyStats(12);
       const header = 'Month,Requests,Tokens In,Tokens Out,Cost USD,Cache Hits,Saved USD,Tokens Saved\n';
       const lines = monthlyStats.map((m) =>
-        [m.month, m.cacheHits + (stats.totalRequests / Math.max(monthlyStats.length, 1)) | 0,
+        [m.month, m.requests,
          m.tokensIn, m.tokensOut, m.costUsd.toFixed(8), m.cacheHits, m.savedUsd.toFixed(8), m.tokensSaved].join(',')
       );
       const csv = header + lines.join('\n');
@@ -255,12 +309,34 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Show proxy URL in output channel on startup
   const proxyUrl = getProxyUrl();
-  const sessionToken = getSessionToken();
+  // Start the proxy after the commands are registered: if it fails, the setup wizard, copy
+  // commands and cache tools still work
+  try {
+    await startProxyServer(context);
+    updateStatusBar();
+    startQuotaPolling(getConfig());
+    setOnRecordHook(() => {
+      refreshDashboard();
+      updateStatusBar();
+    });
+  } catch (err) {
+    updateStatusBar();
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`TPT proxy failed to start: ${msg}`);
+    vscode.window.showErrorMessage(
+      `TPT proxy failed to start: ${msg}`,
+      'Show Output'
+    ).then((choice) => {
+      if (choice === 'Show Output') getChannel().show(true);
+    });
+  }
+
+  // The token is a credential: it is copied via "TPT: Copy Session Token", never printed here
   if (proxyUrl) {
     log(`Proxy URL: ${proxyUrl}`);
-    log(`Session token: ${sessionToken} (include as X-TPT-Token header)`);
-    log(`For Claude Code: ANTHROPIC_BASE_URL=${proxyUrl} is already injected into new terminals.`);
-    log(`For Cline: set custom base URL to ${proxyUrl} and add header X-TPT-Token: ${sessionToken}`);
+    log('Session token: run "TPT: Copy Session Token" to copy it (sent as the X-TPT-Token header).');
+    log(`For Claude Code: ANTHROPIC_BASE_URL=${proxyUrl} and ANTHROPIC_CUSTOM_HEADERS are injected into new terminals.`);
+    log(`For Cline: set custom base URL to ${proxyUrl} and add the X-TPT-Token header (or run "TPT: Auto-Configure Cline").`);
   }
 
   // Show channel automatically on first activation
@@ -270,8 +346,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   log('TPT Code Command Center activated.');
 }
 
-export function deactivate(): void {
-  stopProxyServer();
+export async function deactivate(): Promise<void> {
+  await stopProxyServer();
   stopQuotaPolling();
   disposeDashboard();
   disposeStatusBar();
