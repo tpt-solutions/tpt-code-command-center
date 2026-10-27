@@ -178,7 +178,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 
 ## Phase 14 — Test Coverage Gaps (In progress)
 
-Automated: `npm run compile` clean; `npm test` 137/137 passing; `npm run lint` clean.
+Automated: `npm run compile` clean; `npm test` 143/143 passing; `npm run lint` clean.
 
 - [x] `runRouter`: rule matching, returned provider, unknown provider, empty match, format mismatch, keyword matching ignores tool output, built-in rule order (`routerRules.test.ts`). [ ] Override applied to the upstream request (needs an integration test)
 - [x] Token Shield: key scope (model, system, format), tool-call detection (`tokenShield.test.ts`). [ ] Eviction SQL, TTL expiry, semantic cache
@@ -192,5 +192,6 @@ Automated: `npm run compile` clean; `npm test` 137/137 passing; `npm run lint` c
 - [x] Request paths: `/v1/v1` doubling, path allowlist, token comparison (`requestPaths.test.ts`)
 - [x] SSRF validation: bracketed and mapped IPv6, CGNAT, decimal/hex IPv4, provider validation (`config.test.ts`)
 - [x] Ledger: CSV quoting and formula guard (`ledger.test.ts`)
-- [ ] Integration (needs a running proxy): router model reaches upstream, routed-provider auth headers, streaming client disconnect aborts upstream, bodyless GET passthrough, `ANTHROPIC_CUSTOM_HEADERS` accepted by a live Claude Code session
+- [x] End-to-end against the real server (`proxy.server.integration.test.ts`, mock upstream): routed model reaches the upstream with a single `/v1` path; a cross-format rule is not applied; bodyless `GET /v1/models` passes through; missing or wrong token gets 401; a path outside the allowlist gets 404 and never reaches the upstream
+- [ ] Integration still open: routed-provider auth headers, streaming client disconnect aborting the upstream, and `ANTHROPIC_CUSTOM_HEADERS` accepted by a live Claude Code session
 - [ ] Manual: macOS/Linux `.vsix` install, `cache_read_input_tokens > 0` on turn 2, first CI run on GitHub
