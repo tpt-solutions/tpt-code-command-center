@@ -131,7 +131,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [x] Silent Edit: invalid line numbers rejected and types checked; a triple backtick inside the JSON no longer breaks parsing; all text blocks are read; stream and non-stream replies both go through the confirmation prompt. Edits are left unsaved on purpose
 - [x] Router: keyword match uses only the user's typed text (not tool output); extension detection ends at whitespace/punctuation; `maxTokens` counts tool blocks; empty `match: {}` skipped; unknown providers skipped; the built-in code rule now comes before the short-prompt rule
 - [x] Prompt Cache: never exceeds four breakpoints (counts the client's own); thinking and empty blocks are skipped. [x] Mistral key only set when the request really goes to Mistral (the router now runs first). [ ] Memory Weaver window shift still defeats caching
-- [x] Weave: `..` containment fixed for both the name check and path resolution. The query and its skeleton cache are reused across requests, and skeletons are keyed on mtime and size, so edits refresh them. [ ] Partial reads (line ranges) still get the whole-file skeleton
+- [x] Weave: `..` containment fixed for both the name check and path resolution. The query and its skeleton cache are reused across requests, and skeletons are keyed on mtime and size, so edits refresh them. Ranged reads (offset/limit or line numbers) are passed through unchanged by Smart Context, so the lines the model asked for stay intact
 - [x] Dead/stub code: `pruneMemory` now clears Memory Weaver history (with confirmation); `clearLedger` has a command; `getDailySpendUsd` and `ProxyResponse` removed. [ ] `memory.json` is still write-only
 - [x] Pricing: lookup is vendor-aware with longest-match (Anthropic dated ids now resolve); empty model → cost 0; negative OpenRouter prices ignored; 24 h refresh recurs. [ ] No pricing without a workspace folder
 - [ ] Cost accuracy: [x] the ledger records the provider's own token counts (`ledger/usage.ts`), falling back to the `chars/4` estimate only when none come back. [x] Cached prompt tokens are billed at OpenRouter's cache read and write rates; a model without them falls back to the prompt rate. [x] `exportMonthlySummary` Requests column is now a real per-month count. [x] Savings averages use real upstream calls only (cache hits excluded)
@@ -140,7 +140,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [x] Path allowlist — only `/v1/messages`, `/v1/chat/completions`, `/v1/models` and `/v1/embeddings` are proxied; anything else returns 404
 - [x] SSRF check covers bracketed and IPv4-mapped IPv6, decimal/hex IPv4, CGNAT, `fc00::/7`, `fe80::/10`. Ollama base URLs use it. [ ] Forge registry URL is https-only but doesn't use this check
 - [x] Unknown router provider skipped (no longer falls through to OpenRouter's key)
-- [x] Forge: timeout, status and size checks, https only. [ ] Hash pinning; remote entries still override built-ins and can fetch arbitrary URLs
+- [x] Forge: timeout, status and size checks, https only. Entries may pin a `sha256`; a mismatch refuses the install (`forge.test.ts`). [ ] Registry entries do not carry hashes yet, so the pin is optional and most entries install unverified; remote entries still override built-ins and can fetch arbitrary URLs
 - [x] Session token no longer printed to the Output Channel (copy with `TPT: Copy Session Token`); constant-time comparison; repeated header rejected
 - [ ] Move API keys and session token to `SecretStorage` (currently plaintext in workspace `settings.json`); `.gitignore` check misses patterns and the no-`.gitignore` case; also ignore `.tpt/` (ledger/cache hold prompts)
 - [x] Memory Weaver: corrupt `memory.json` no longer throws into the pipeline; the Ollama URL comes from the validated setting; the proxy backend keeps base path prefixes
@@ -172,7 +172,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [ ] Cross-session memory recall — inject relevant `memory.json` summaries back into new conversations
 - [ ] Workspace policy file (`.tpt/policy.json`) for team-shared Vault/Router/budget rules, with a trust prompt for cloned repos
 - [ ] Request replay / A-B compare across models using the ledger
-- [ ] Vault test-your-patterns tool and a "what would be redacted" preview
+- [x] Vault preview: `TPT: Test Vault Patterns on Selection` shows the redacted text for the selection or typed input
 - [ ] Anonymous opt-in adoption metrics (currently zero telemetry, so adoption can't be measured)
 - [ ] Cross-format routing — translate request/response between Anthropic Messages and OpenAI chat formats so routes can cross providers
 - [ ] Groq and Google Gemini providers (supersedes the open Phase 10 item)
