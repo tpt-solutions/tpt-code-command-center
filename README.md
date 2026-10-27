@@ -21,6 +21,8 @@ A VS Code extension that acts as a local HTTP proxy between your AI coding tools
 | **TPT Forge** | Install community-maintained router rules, vault patterns, and system prompts from a GitHub registry |
 | **TPT Terminal** | Live pipeline logs in the VS Code Output Channel |
 
+For how TPT compares on cost with a Claude Pro subscription, see [claude-compare.md](claude-compare.md). Those figures are estimates, not measurements.
+
 ---
 
 ## Quick Start
@@ -49,7 +51,7 @@ Open VS Code Settings (`Ctrl+,`) and search for `tpt`:
 | Setting value | Routes to |
 |---------------|-----------|
 | `openrouter` (default) | [OpenRouter](https://openrouter.ai) — access all models with one key |
-| `anthropic` | Anthropic API directly |
+| `anthropic` | Anthropic API directly. OpenAI-format clients (Continue, Roo Code) are translated to the Anthropic format for it |
 | `openai` | OpenAI API directly |
 | `deepseek` | DeepSeek API directly |
 | `qwen` | Alibaba Cloud DashScope (Qwen) |
@@ -74,6 +76,8 @@ When the extension activates, it starts a local proxy and prints the URL and ses
 
 **Any other OpenAI-compatible tool** — point the base URL to `http://localhost:7331/v1`.
 
+Step-by-step guides for each tool, and sample config files, are in [examples/](examples/): Claude Code, Cline, Roo Code, Continue and local models.
+
 ---
 
 ## Configuration Reference
@@ -85,6 +89,7 @@ All settings are under the `tpt.*` namespace in VS Code settings (`Ctrl+,` → s
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `tpt.enabled` | `true` | Master switch — bypass all modules when `false` |
+| `tpt.dryRun` | `false` | Measure what the modules would change, but send every request exactly as the client wrote it. Use `TPT: Show Token Savings (Last Request)` to see the result. No cached answers are returned, and Memory Weaver uses only its local extractive backend |
 | `tpt.upstreamProvider` | `openrouter` | Default upstream provider |
 | `tpt.openrouterApiKey` | `""` | OpenRouter API key |
 | `tpt.anthropicApiKey` | `""` | Anthropic API key |
@@ -92,6 +97,9 @@ All settings are under the `tpt.*` namespace in VS Code settings (`Ctrl+,` → s
 | `tpt.localBaseUrl` | `http://localhost:11434/v1` | Local model server URL (Ollama default) |
 | `tpt.customBaseUrl` | `""` | Custom upstream base URL |
 | `tpt.customApiKey` | `""` | API key for custom upstream |
+| `tpt.geminiApiKey`, `tpt.groqApiKey`, `tpt.mistralApiKey`, `tpt.glmApiKey`, `tpt.mimoApiKey`, `tpt.deepseekApiKey`, `tpt.qwenApiKey`, `tpt.kimiApiKey`, `tpt.grokApiKey` | `""` | Keys for the other hosted providers |
+
+Keys are stored in VS Code's SecretStorage. A key still in `settings.json` is moved there on first run, and the key settings are deprecated. `TPT: Run Setup Wizard` sets them.
 
 ### TPT Vault
 
@@ -131,13 +139,16 @@ For repositories indexed with [`tpt-weave adopt`](https://github.com/tpt-solutio
 | `tpt.memoryWeaver.enabled` | `true` | Enable context summarisation |
 | `tpt.memoryWeaver.tokenThreshold` | `50000` | Token count that triggers summarisation |
 | `tpt.memoryWeaver.fallbackOrder` | `["ollama","proxy","extractive"]` | Summarisation backend priority |
+| `tpt.memoryWeaver.anthropicSummaryModel` | `claude-haiku-4-5-20251001` | Model used by the proxy backend for Anthropic requests |
+| `tpt.memoryWeaver.openaiSummaryModel` | `gpt-4o-mini` | Model used by the proxy backend for OpenAI-format requests |
+| `tpt.memoryWeaver.ollamaModel` | `llama3` | Model used by the Ollama backend |
 
 ### TPT Router
 
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `tpt.router.enabled` | `false` | Enable heuristic routing |
-| `tpt.router.rules` | `[]` | Array of routing rules (see below) |
+| `tpt.router.rules` | `[]` | Array of routing rules (see below). When empty, built-in defaults apply |
 
 **Router rule format:**
 ```json
@@ -153,6 +164,12 @@ For repositories indexed with [`tpt-weave adopt`](https://github.com/tpt-solutio
 ```
 
 Rules are evaluated in order. The first match wins.
+
+### Cross-session recall (opt-in)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `tpt.memoryWeaver.recall.enabled` | `false` | On the first turn of a new conversation, add the Memory Weaver summaries from earlier sessions that share words with the request, to the system prompt. Adds tokens and changes the prompt, so it is off by default |
 
 ### TPT Silent Edit
 
@@ -180,11 +197,40 @@ Anthropic and Mistral are the two providers in TPT's list that require an explic
 | GLM (Zhipu/Z.ai) | Automatic — cached input billed at 1/5th normal price, no code needed |
 | MiMo (Xiaomi) | Automatic prefix caching via the OpenAI-compatible endpoint, no code needed |
 
+### TPT Token Shield — Semantic Cache (opt-in)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `tpt.tokenShield.semanticCache.enabled` | `false` | Also match prompts by embedding similarity, using a local Ollama model |
+| `tpt.tokenShield.semanticCache.similarityThreshold` | `0.92` | Cosine similarity needed for a semantic hit |
+| `tpt.tokenShield.semanticCache.ollamaModel` | `nomic-embed-text` | Embedding model |
+| `tpt.tokenShield.semanticCache.ollamaBaseUrl` | `http://localhost:11434` | Ollama server for embeddings |
+
+### TPT Cost Budget
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `tpt.costBudget.dailyLimitUsd` | `0` | Warn when daily spend passes this amount (`0` disables) |
+| `tpt.costBudget.monthlyLimitUsd` | `0` | Warn when monthly spend passes this amount (`0` disables) |
+| `tpt.costBudget.hardStop` | `false` | Reject requests with HTTP 429 once a limit is reached, instead of only warning |
+| `tpt.costBudget.quotaPollingIntervalSec` | `180` | How often quota is polled |
+
 ### TPT Forge
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `tpt.forge.autoUpdate` | `true` | Auto-check for community config updates |
+| `tpt.forge.autoUpdate` | `true` | On activation, re-install the Forge entries already installed in this workspace from the registry. This makes a network request to the registry when entries are installed |
+| `tpt.forge.registryUrl` | `""` | Registry index URL. Empty uses the official registry. Must be `https` and cannot point at a private address |
+
+Installed entries take effect as follows:
+
+| Type | Effect |
+|------|--------|
+| `router-rule` | Used as the router rules when `tpt.router.rules` is empty |
+| `vault-pattern` | Added to the Vault's custom patterns |
+| `system-prompt` | Replaces the Silent Edit schema text when Silent Edit is on |
+
+Installing an entry is your consent to it. Router rules can send requests to another provider, and system prompts change what the model is told, so read an entry before installing it.
 
 ### TPT Terminal
 
@@ -204,9 +250,54 @@ Open the Command Palette (`Ctrl+Shift+P`) and type `TPT`:
 | `TPT: Show Dashboard` | Open the token stats WebView panel |
 | `TPT: Show Token Stats` | Quick stats notification |
 | `TPT: Copy Proxy URL to Clipboard` | Copy `http://localhost:<port>` for manual tool setup |
+| `TPT: Copy Session Token` | Copy the `X-TPT-Token` value |
+| `TPT: Copy Claude Code Setup Snippet` | Copy environment variables for Claude Code (PowerShell or bash) |
 | `TPT: Clear Local Cache` | Wipe the Token Shield prompt cache |
-| `TPT: Force Memory Weaver Prune` | Manually trigger context summarisation |
+| `TPT: Show Memory Weaver Summaries` | Open `.tpt/memory.json`, the summaries Memory Weaver has written |
+| `TPT: Clear Memory Weaver History` | Clear the summaries Memory Weaver keeps (asks first) |
+| `TPT: Clear Request Ledger` | Delete the local request ledger |
+| `TPT: Export Ledger to CSV` | Write every ledger row to a CSV file |
+| `TPT: Export Monthly Summary to Downloads` | Write a per-month usage summary to your Downloads folder |
+| `TPT: Apply Settings Preset` | Apply Frugal, Privacy-first, Local only (Ollama) or Anthropic tiering |
+| `TPT: Configure Models` | Pick the models TPT uses |
+| `TPT: Run Setup Wizard` | Choose a provider, enter a key and test the connection |
+| `TPT: Reset Credentials & Provider` | Remove stored keys and the provider choice |
+| `TPT: Test Connection` | Send a test request through the proxy |
+| `TPT: Test Vault Patterns on Selection` | Show what the Vault would redact in the selected text |
+| `TPT: Show Token Savings (Last Request)` | Per-stage size of the last request: what each module saved, or added |
+| `TPT: Suggest Settings From History` | Read the measured requests and print suggestions for Memory Weaver and the router. Nothing is changed; needs 20 measured requests |
+| `TPT: Export Savings Report (This Month)` | Write a Markdown report of what each module removed this month, to Downloads. Figures are estimates, not billed tokens |
+| `TPT: Inspect Last Request` | Dump the last request's processed body and module actions to the Output Channel |
+| `TPT: Show Prompt Diff` | Compare the original and processed prompt side by side |
+| `TPT: Auto-Configure Cline` | Set Cline's provider, base URL and headers to use TPT |
+| `TPT: Open Settings` | Open the `tpt.*` settings |
 | `TPT: Browse Forge` | Install community configs from the registry |
+
+---
+
+## Troubleshooting
+
+**Requests fail with HTTP 401.** The client did not send the current session token. The token changes every time the extension activates. Run `TPT: Copy Session Token` and update the client, or run `TPT: Copy Claude Code Setup Snippet` again. The token can be sent as `X-TPT-Token`, as `Authorization: Bearer`, or as `x-api-key`.
+
+**The port is not 7331.** Port 7331 was in use, so TPT took the next free port. The URL is in the TPT Command Center Output Channel. Copy the current URL with `TPT: Copy Proxy URL to Clipboard`.
+
+**A terminal still points at an old URL or token.** TPT writes the environment into new terminals only. Close the terminal and open a new one.
+
+**Costs or routing look wrong.** Turn on `tpt.terminal.verboseLogging` and run `TPT: Inspect Last Request`. The output lists each module's action and any router override.
+
+---
+
+## FAQ
+
+**Does TPT send my code anywhere else?** Requests go from the local proxy to the provider you chose, and nowhere else. TPT also makes two other kinds of network call: it fetches model pricing from OpenRouter once a day, and it checks the Forge registry when Forge auto-update is on and entries are installed. Turn auto-update off with `tpt.forge.autoUpdate` if you do not want the registry call.
+
+**Why are Router and Silent Edit off?** Routing changes which model answers, and Silent Edit changes how edits are applied. Both are worth turning on once you have looked at what they do in the Output Channel.
+
+**Does routing to another provider need that provider's key?** Yes. A rule that sends a request to OpenAI, for example, needs `tpt.openaiApiKey`. Without it, the request is not sent to that provider.
+
+**Are secrets redacted when the other modules are off?** Yes. Vault is its own setting and runs before the other modules. Redaction is pattern-based, so use `TPT: Test Vault Patterns on Selection` to check that a particular secret format is caught.
+
+**Where is my data?** In `.tpt/` in the workspace, and nowhere else. See [Local Files](#local-files).
 
 ---
 
@@ -246,6 +337,22 @@ Add `.tpt/` to your `.gitignore` to avoid committing local data.
 
 ---
 
+## Team Policy
+
+A repository can share settings through a `tpt-policy.json` file at its root, which you commit:
+
+```json
+{
+  "vault": { "customRegex": ["acme-key-[A-Za-z0-9]{32}"] },
+  "costBudget": { "dailyLimitUsd": 5 },
+  "dryRun": false
+}
+```
+
+A policy can only tighten your settings: it adds Vault patterns, lowers cost budgets, and can turn dry run on. It cannot add router rules or change the provider, so a repository cannot send your code to another provider. The policy applies only after you choose **Trust and apply** when VS Code asks. The trust is for that exact file, so a changed policy asks again.
+
+---
+
 ## Building from Source
 
 ```bash
@@ -274,4 +381,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Dual-licensed under either of [MIT](LICENSE-MIT) or [Apache 2.0](LICENSE-APACHE), at your option.

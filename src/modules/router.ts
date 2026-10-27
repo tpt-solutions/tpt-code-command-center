@@ -101,12 +101,11 @@ function hasCriteria(rule: RouterRule): boolean {
   return m.maxTokens !== undefined || !!m.keywords?.length || !!m.extensions?.length;
 }
 
-// `format` is the API format of the incoming request. Rules that would need an OpenAI-format
-// request translated to the Anthropic format are skipped (see the check below).
+// Every rule applies whatever the request's API format: the pipeline translates the request when
+// the provider speaks the other format.
 export function runRouter(
   body: AnthropicRequest | OpenAIRequest | Record<string, unknown>,
-  rules: RouterRule[],
-  format?: 'anthropic' | 'openai'
+  rules: RouterRule[]
 ): RouteOverride | undefined {
   const messages = (body as AnthropicRequest).messages ?? [];
   const tokenCount = estimateTokensInMessages(messages);
@@ -123,10 +122,6 @@ export function runRouter(
     // An unknown provider would fall through to OpenRouter and send that key; a rule with
     // no criteria would catch every request. Both are configuration mistakes: skip them.
     if (!isUpstreamProvider(provider) || !hasCriteria(rule)) continue;
-    // An Anthropic-format request may go to an OpenAI-compatible provider: the pipeline translates
-    // it. The other direction is not translated, so such a rule is skipped.
-    if (format === 'openai' && providerFormat(provider) === 'anthropic') continue;
-
     let matched = true;
     if (match.maxTokens !== undefined && tokenCount > match.maxTokens) {
       matched = false;

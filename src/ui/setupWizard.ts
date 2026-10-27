@@ -143,6 +143,30 @@ const PROVIDER_KEY_SETTING: Record<string, string> = {
   custom: 'customApiKey',
 };
 
+const EXAMPLES_URL = 'https://github.com/tpt-solutions/tpt-code-command-center/blob/master/examples';
+
+interface ToolOption extends vscode.QuickPickItem {
+  run: () => Thenable<unknown>;
+}
+
+// Step 3, after a good connection check: point the tool the user works in at the proxy. Claude
+// Code and Cline have commands that do it; the other tools have a guide in examples/.
+async function offerToolSetup(): Promise<void> {
+  const guide = (file: string) => () => vscode.env.openExternal(vscode.Uri.parse(`${EXAMPLES_URL}/${file}`));
+  const options: ToolOption[] = [
+    { label: 'Claude Code', description: 'Copy the environment snippet', run: () => vscode.commands.executeCommand('tpt.copyClaudeCodeSnippet') },
+    { label: 'Cline', description: 'Write Cline\'s provider settings', run: () => vscode.commands.executeCommand('tpt.configureCline') },
+    { label: 'Roo Code', description: 'Open the setup guide', run: guide('roo-code.md') },
+    { label: 'Continue', description: 'Open the setup guide', run: guide('continue.md') },
+    { label: 'Another tool', description: 'Open the examples folder', run: () => vscode.env.openExternal(vscode.Uri.parse(EXAMPLES_URL)) },
+  ];
+  const pick = await vscode.window.showQuickPick(options, {
+    placeHolder: 'Step 3 — Which tool will use TPT? (you can skip this)',
+    ignoreFocusOut: true,
+  });
+  if (pick) await pick.run();
+}
+
 export async function runSetupWizard(context: vscode.ExtensionContext): Promise<void> {
   // Step 1: pick provider
   const providerPick = await vscode.window.showQuickPick(
@@ -205,6 +229,7 @@ export async function runSetupWizard(context: vscode.ExtensionContext): Promise<
         vscode.commands.executeCommand('tpt.showDashboard');
       }
     });
+    await offerToolSetup();
     return;
   }
 

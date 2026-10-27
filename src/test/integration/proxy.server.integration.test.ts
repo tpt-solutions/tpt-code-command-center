@@ -126,17 +126,6 @@ test('router: the routed model reaches the upstream and the /v1 path is not doub
   setRouter(undefined);
 });
 
-test('router: a rule for the other API format is not applied (body is not translated)', async () => {
-  setRouter([{ match: { maxTokens: 2000 }, model: 'claude-haiku-5-5', provider: 'anthropic' }]);
-  seen.length = 0;
-
-  const res = await callProxy('POST', '/v1/chat/completions', chatBody('client-model'), getSessionToken());
-
-  assert.equal(res.status, 200);
-  assert.equal(JSON.parse(seen[0].body).model, 'client-model');
-  setRouter(undefined);
-});
-
 test('router: the auth header follows the routed provider, not the global one', async () => {
   // Global provider is "local" (no key). The routed "custom" provider has a key.
   testConfig['customBaseUrl'] = `http://localhost:${upstreamPort}/v1`;

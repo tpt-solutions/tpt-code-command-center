@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { API_KEY_SETTINGS, cachedKey } from './secrets';
+import { applyWorkspacePolicy } from '../modules/policy';
 
 export const UPSTREAM_PROVIDERS = [
   'openrouter',
@@ -26,6 +27,8 @@ export function isUpstreamProvider(value: unknown): value is UpstreamProvider {
 
 export interface TptConfig {
   enabled: boolean;
+  // Measure what the modules would change, but send the request exactly as the client wrote it
+  dryRun: boolean;
   upstreamProvider: UpstreamProvider;
   openrouterApiKey: string;
   anthropicApiKey: string;
@@ -62,6 +65,8 @@ export interface TptConfig {
     anthropicSummaryModel: string;
     openaiSummaryModel: string;
     ollamaModel: string;
+    // Bring summaries from earlier sessions into the first turn of a new conversation
+    recallEnabled: boolean;
   };
   router: { enabled: boolean; rules: RouterRule[] };
   silentEdit: { enabled: boolean };
@@ -87,10 +92,16 @@ function withSecretKeys(config: TptConfig): TptConfig {
   return config;
 }
 
+// The settings every request uses: the user's own, tightened by a workspace policy the user trusts
 export function getConfig(): TptConfig {
+  return applyWorkspacePolicy(readSettings());
+}
+
+function readSettings(): TptConfig {
   const c = vscode.workspace.getConfiguration('tpt');
   return withSecretKeys({
     enabled: c.get<boolean>('enabled', true),
+    dryRun: c.get<boolean>('dryRun', false),
     upstreamProvider: c.get<UpstreamProvider>('upstreamProvider', 'openrouter'),
     openrouterApiKey: c.get<string>('openrouterApiKey', ''),
     anthropicApiKey: c.get<string>('anthropicApiKey', ''),
@@ -137,6 +148,7 @@ export function getConfig(): TptConfig {
       anthropicSummaryModel: c.get<string>('memoryWeaver.anthropicSummaryModel', 'claude-haiku-4-5-20251001'),
       openaiSummaryModel:    c.get<string>('memoryWeaver.openaiSummaryModel',    'gpt-4o-mini'),
       ollamaModel:           c.get<string>('memoryWeaver.ollamaModel',            'llama3'),
+      recallEnabled:         c.get<boolean>('memoryWeaver.recall.enabled',        false),
     },
     router: {
       enabled: c.get<boolean>('router.enabled', false),

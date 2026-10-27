@@ -1,9 +1,11 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import * as vscode from 'vscode';
 import { AnthropicRequest, OpenAIRequest } from '../proxy/types';
 import type { Database } from 'sql.js';
 import { log } from '../utils/logger';
+import { dataDir as getTptDir, setFallbackDataDir } from '../utils/dataDir';
+import { StageTokens } from '../utils/inspectStore';
+import { ModuleSavings, attributeStages, sumModuleSavings } from '../utils/savings';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let initSqlJs: (config?: any) => Promise<any>;
@@ -12,8 +14,29 @@ let db: Database | undefined;
 let _onRecord: (() => void) | undefined;
 export function setOnRecordHook(fn: () => void): void { _onRecord = fn; }
 
-let _storageUri: string | undefined;
-export function setStoragePath(uri: string): void { _storageUri = uri; }
+export function setStoragePath(uri: string): void { setFallbackDataDir(uri); }
+
+const CREATE_REQUESTS_TABLE = `
+    CREATE TABLE IF NOT EXISTS requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts INTEGER NOT NULL,
+      model TEXT NOT NULL,
+      tokens_in INTEGER NOT NULL,
+      tokens_out INTEGER NOT NULL,
+      cost_usd REAL NOT NULL,
+      cache_hit INTEGER NOT NULL,
+      module_actions TEXT NOT NULL,
+      stage_tokens TEXT
+    )
+  `;
+
+// Ledgers written before per-stage counts existed lack the stage_tokens column; add it in place
+function ensureStageColumn(database: Database): void {
+  const columns = database.exec('PRAGMA table_info(requests)')[0]?.values ?? [];
+  if (!columns.some((c) => c[1] === 'stage_tokens')) {
+    database.run('ALTER TABLE requests ADD COLUMN stage_tokens TEXT');
+  }
+}
 
 let dbReady: Promise<Database> | undefined;
 
@@ -38,6 +61,7 @@ async function openDb(): Promise<Database> {
   const SQL = await initSqlJs({
     locateFile: (file: string) => path.join(__dirname, '..', '..', 'node_modules', 'sql.js', 'dist', file),
   });
+  sqlApi = SQL;
 
   const tptDir = getTptDir();
   if (!tptDir) {
@@ -52,42 +76,10 @@ async function openDb(): Promise<Database> {
     }
   }
 
-  db!.run(`
-    CREATE TABLE IF NOT EXISTS requests (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      ts INTEGER NOT NULL,
-      model TEXT NOT NULL,
-      tokens_in INTEGER NOT NULL,
-      tokens_out INTEGER NOT NULL,
-      cost_usd REAL NOT NULL,
-      cache_hit INTEGER NOT NULL,
-      module_actions TEXT NOT NULL
-    )
-  `);
+  db!.run(CREATE_REQUESTS_TABLE);
+  ensureStageColumn(db!);
 
   return db!;
-}
-
-// Returns undefined (and the ledger stays in memory) when the folder cannot be created,
-// for example a read-only or virtual workspace; requests must still be served.
-function ensureDir(dir: string): string | undefined {
-  try {
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    return dir;
-  } catch {
-    return undefined;
-  }
-}
-
-function getTptDir(): string | undefined {
-  const folders = vscode.workspace.workspaceFolders;
-  if (folders?.length) {
-    return ensureDir(path.join(folders[0].uri.fsPath, '.tpt'));
-  }
-  if (_storageUri) {
-    return ensureDir(_storageUri);
-  }
-  return undefined;
 }
 
 // Writes to a temp file and renames it into place, so a crash mid-write cannot leave a
@@ -118,18 +110,43 @@ export function flushLedger(): void {
   persistDb();
 }
 
-function persistDb(): void {
-  if (!db) return;
+// Every VS Code window on the workspace writes the same ledger.db. A window therefore never writes
+// its whole in-memory copy back, since that would erase rows other windows added. It merges the
+// rows it recorded since its last write into the file as it is on disk.
+const INSERT_ROW = 'INSERT INTO requests (ts, model, tokens_in, tokens_out, cost_usd, cache_hit, module_actions, stage_tokens) VALUES (?,?,?,?,?,?,?,?)';
+let unsaved: (string | number | null)[][] = [];
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let sqlApi: any;
+
+// Returns false when the write failed. Persisting is best-effort: the in-memory ledger keeps counting.
+function updateDiskLedger(change: (disk: Database) => void): boolean {
   const tptDir = getTptDir();
-  if (!tptDir) return;
+  if (!tptDir || !sqlApi) return false;
   const dbPath = path.join(tptDir, 'ledger.db');
   const tmpPath = `${dbPath}.tmp`;
   try {
-    fs.writeFileSync(tmpPath, Buffer.from(db.export()));
+    const disk: Database = fs.existsSync(dbPath)
+      ? new sqlApi.Database(fs.readFileSync(dbPath))
+      : new sqlApi.Database();
+    disk.run(CREATE_REQUESTS_TABLE);
+    ensureStageColumn(disk);
+    change(disk);
+    fs.writeFileSync(tmpPath, Buffer.from(disk.export()));
     fs.renameSync(tmpPath, dbPath);
+    disk.close();
+    return true;
   } catch (e) {
-    // Persisting is best-effort; the in-memory ledger keeps counting
     log(`Ledger: could not persist ${dbPath}: ${e}`);
+    return false;
+  }
+}
+
+function persistDb(): void {
+  if (!db || unsaved.length === 0) return;
+  const rows = unsaved;
+  if (updateDiskLedger((disk) => { for (const row of rows) disk.run(INSERT_ROW, row); })) {
+    unsaved = unsaved.slice(rows.length);
   }
 }
 
@@ -140,14 +157,19 @@ export interface LedgerEntry {
   costUsd: number;
   moduleActions: string[];
   cacheHit: boolean;
+  // Estimated size after each pipeline stage; absent for requests that were not measured
+  stageTokens?: StageTokens[];
 }
 
 export async function recordRequest(entry: LedgerEntry): Promise<void> {
   const database = await getDb();
-  database.run(
-    'INSERT INTO requests (ts, model, tokens_in, tokens_out, cost_usd, cache_hit, module_actions) VALUES (?,?,?,?,?,?,?)',
-    [Date.now(), entry.model, entry.tokensIn, entry.tokensOut, entry.costUsd, entry.cacheHit ? 1 : 0, entry.moduleActions.join(',')]
-  );
+  const row = [
+    Date.now(), entry.model, entry.tokensIn, entry.tokensOut, entry.costUsd, entry.cacheHit ? 1 : 0,
+    entry.moduleActions.join(','),
+    entry.stageTokens ? JSON.stringify(entry.stageTokens) : null,
+  ];
+  database.run(INSERT_ROW, row);
+  unsaved.push(row);
   schedulePersist();
   _onRecord?.();
 }
@@ -242,6 +264,43 @@ export async function getModelBreakdown(): Promise<ModelStat[]> {
   }));
 }
 
+// Savings per module over the requests since `sinceMs`, from the stage counts stored with each row.
+// These are estimates (characters ÷ 4 at each stage), not billed tokens.
+export async function getModuleSavings(sinceMs = 0): Promise<{ modules: ModuleSavings[]; measuredRequests: number }> {
+  const database = await getDb();
+  const rows = database.exec(
+    'SELECT stage_tokens FROM requests WHERE ts >= ? AND stage_tokens IS NOT NULL',
+    [sinceMs]
+  );
+  const perRequest: StageTokens[][] = [];
+  for (const r of rows[0]?.values ?? []) {
+    try {
+      const stages = JSON.parse(String(r[0])) as StageTokens[];
+      if (Array.isArray(stages) && stages.length > 0) perRequest.push(stages);
+    } catch { /* a corrupt row is left out of the totals */ }
+  }
+  return { modules: sumModuleSavings(perRequest), measuredRequests: perRequest.length };
+}
+
+// The raw material for settings suggestions: each measured request's size before any module ran,
+// and how many requests Memory Weaver actually summarised.
+export async function getTuningSample(): Promise<{ originals: number[]; memorySummarisedRequests: number }> {
+  const database = await getDb();
+  const rows = database.exec('SELECT stage_tokens FROM requests WHERE stage_tokens IS NOT NULL');
+  const originals: number[] = [];
+  let memorySummarisedRequests = 0;
+  for (const r of rows[0]?.values ?? []) {
+    try {
+      const stages = JSON.parse(String(r[0])) as StageTokens[];
+      if (!Array.isArray(stages) || stages.length === 0) continue;
+      originals.push(stages[0].tokens);
+      const memory = attributeStages(stages).find((e) => e.stage === 'memoryWeaver');
+      if (memory && memory.saved > 0) memorySummarisedRequests++;
+    } catch { /* a corrupt row is left out */ }
+  }
+  return { originals, memorySummarisedRequests };
+}
+
 export async function getTodayCostUsd(): Promise<number> {
   const database = await getDb();
   const startOfDay = new Date();
@@ -313,10 +372,12 @@ export async function getMonthlyStats(months = 12): Promise<MonthStat[]> {
   });
 }
 
+// Clears the file as well as this window's copy, so a reload does not bring the rows back
 export async function clearLedger(): Promise<void> {
   const database = await getDb();
   database.run('DELETE FROM requests');
-  persistDb();
+  unsaved = [];
+  updateDiskLedger((disk) => disk.run('DELETE FROM requests'));
 }
 
 // Quotes a text field for CSV. Cells starting with = + - @ are prefixed with ' so that

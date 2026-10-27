@@ -44,6 +44,16 @@
           "default": true,
           "description": "Master switch — enable or disable the entire TPT proxy pipeline."
         },
+        "tpt.memoryWeaver.recall.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Cross-session recall. On the first turn of a new conversation, add the Memory Weaver summaries from earlier sessions that share words with the request, to the system prompt, marked as possibly not applicable. Off by default: it adds tokens and changes the prompt."
+        },
+        "tpt.dryRun": {
+          "type": "boolean",
+          "default": false,
+          "description": "Dry run: measure what the modules would change (TPT: Show Token Savings), but send every request exactly as the client wrote it. No cached answers are returned, and Memory Weaver uses only its local extractive backend."
+        },
         "tpt.upstreamProvider": {
           "type": "string",
           "enum": [
@@ -383,6 +393,10 @@
         "title": "TPT: Clear Memory Weaver History"
       },
       {
+        "command": "tpt.showMemory",
+        "title": "TPT: Show Memory Weaver Summaries"
+      },
+      {
         "command": "tpt.clearLedger",
         "title": "TPT: Clear Request Ledger"
       },
@@ -429,6 +443,18 @@
       {
         "command": "tpt.inspectLast",
         "title": "TPT: Inspect Last Request"
+      },
+      {
+        "command": "tpt.showSavings",
+        "title": "TPT: Show Token Savings (Last Request)"
+      },
+      {
+        "command": "tpt.suggestSettings",
+        "title": "TPT: Suggest Settings From History"
+      },
+      {
+        "command": "tpt.exportSavingsReport",
+        "title": "TPT: Export Savings Report (This Month)"
       },
       {
         "command": "tpt.showPromptDiff",
@@ -480,7 +506,7 @@
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
     "pretest": "npm run compile",
-    "test": "node --test out/test/vault.test.js out/test/vaultExtended.test.js out/test/hash.test.js out/test/router.test.js out/test/routerRules.test.js out/test/promptCache.test.js out/test/weave.test.js out/test/requestPaths.test.js out/test/editSafety.test.js out/test/config.test.js out/test/memoryWeaver.test.js out/test/tokenShield.test.js out/test/ledger.test.js out/test/silentEditParse.test.js out/test/promptCacheLimits.test.js out/test/presets.test.js out/test/usage.test.js out/test/pipeline.test.js out/test/ledgerPersistence.test.js out/test/weaveFreshness.test.js out/test/pricing.test.js out/test/forge.test.js out/test/smartContextRanges.test.js out/test/providers.test.js out/test/connection.test.js out/test/forgeBuiltins.test.js out/test/secrets.test.js out/test/translate.test.js out/test/integration/proxy.integration.test.js out/test/integration/proxy.server.integration.test.js",
+    "test": "node --test out/test/vault.test.js out/test/vaultExtended.test.js out/test/hash.test.js out/test/router.test.js out/test/routerRules.test.js out/test/promptCache.test.js out/test/weave.test.js out/test/requestPaths.test.js out/test/editSafety.test.js out/test/config.test.js out/test/memoryWeaver.test.js out/test/tokenShield.test.js out/test/ledger.test.js out/test/silentEditParse.test.js out/test/promptCacheLimits.test.js out/test/presets.test.js out/test/usage.test.js out/test/pipeline.test.js out/test/ledgerPersistence.test.js out/test/weaveFreshness.test.js out/test/pricing.test.js out/test/forge.test.js out/test/smartContextRanges.test.js out/test/providers.test.js out/test/connection.test.js out/test/forgeBuiltins.test.js out/test/secrets.test.js out/test/translate.test.js out/test/streamBuffer.test.js out/test/tokenShieldStore.test.js out/test/memoryWeaverRun.test.js out/test/ledgerMerge.test.js out/test/summariserBackends.test.js out/test/silentEditApply.test.js out/test/translateReverse.test.js out/test/pipelineReverse.test.js out/test/pipelineDryRun.test.js out/test/savingsReport.test.js out/test/tuningSuggestions.test.js out/test/policy.test.js out/test/recall.test.js out/test/integration/proxy.integration.test.js out/test/integration/proxy.server.integration.test.js",
     "download-wasm": "node scripts/download-wasm.js"
   },
   "devDependencies": {

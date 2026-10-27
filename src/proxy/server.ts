@@ -16,8 +16,12 @@ import { getCostUsd, initPricing } from '../ledger/pricing';
 import { captureRateLimitHeaders, recordActivity } from '../modules/quotaTracker';
 import { readUpstreamUsage } from '../ledger/usage';
 import { markConnected } from '../utils/connection';
-import { OpenAIStreamToAnthropic, anthropicErrorBody, openAIResponseToAnthropic } from '../modules/translate';
+import {
+  OpenAIStreamToAnthropic, AnthropicStreamToOpenAI, anthropicErrorBody, openAIErrorBody,
+  openAIResponseToAnthropic, anthropicResponseToOpenAI,
+} from '../modules/translate';
 import { StringDecoder } from 'string_decoder';
+import { StreamBuffer } from '../utils/streamBuffer';
 import { bearerToken, buildUpstreamPath, isAllowedPath, pathOnly, tokenMatches, upstreamRequestPath } from './requestPaths';
 
 const PREFERRED_PORT = 7331;
@@ -224,7 +228,7 @@ function forwardStreamingRequest(
   upstreamProvider: UpstreamProvider,
   clientRes: http.ServerResponse,
   extraHeaders: Record<string, string> = {},
-  translator?: OpenAIStreamToAnthropic
+  translator?: OpenAIStreamToAnthropic | AnthropicStreamToOpenAI
 ): Promise<{ accumulated: string; status: number }> {
   return new Promise((resolve) => {
     const url = new URL(targetUrl);
@@ -253,7 +257,11 @@ function forwardStreamingRequest(
           if (!clientRes.headersSent) {
             clientRes.writeHead(status, { 'content-type': 'application/json' });
           }
-          clientRes.end(translator ? anthropicErrorBody(responseBody) : responseBody);
+          // The client gets an error in its own format
+          const errorBody = !translator ? responseBody
+            : translator instanceof AnthropicStreamToOpenAI ? openAIErrorBody(responseBody)
+            : anthropicErrorBody(responseBody);
+          clientRes.end(errorBody);
           resolve({ accumulated: responseBody, status });
         });
         return;
@@ -269,8 +277,9 @@ function forwardStreamingRequest(
 
       // Decode across chunk boundaries, so a multi-byte character split by the network survives
       const decoder = new StringDecoder('utf8');
+      const buffer = new StreamBuffer();
       upstreamRes.on('data', (chunk: Buffer) => {
-        chunks.push(chunk);
+        buffer.push(chunk);
         // A translated stream goes out as the client's format; the raw chunks stay for accounting
         const out = translator ? translator.push(decoder.write(chunk)) : chunk;
         // Respect backpressure: a slow client pauses the upstream instead of growing memory
@@ -286,13 +295,16 @@ function forwardStreamingRequest(
           if (tail) clientRes.write(tail);
         }
         clientRes.end();
-        resolve({ accumulated: Buffer.concat(chunks).toString('utf8'), status });
+        if (buffer.wasTruncated) {
+          log('Stream was longer than the accounting buffer: kept its start and end. Silent Edit blocks in the middle are not applied.');
+        }
+        resolve({ accumulated: buffer.text(), status });
       });
 
       // A stream cut off mid-way is a failure: it must not be recorded or cached as a success
       upstreamRes.on('error', () => {
         clientRes.end();
-        resolve({ accumulated: Buffer.concat(chunks).toString('utf8'), status: 502 });
+        resolve({ accumulated: buffer.text(), status: 502 });
       });
     });
 
@@ -318,7 +330,11 @@ function forwardStreamingRequest(
   });
 }
 
+// The port the terminals were last given, remembered across activations so a move can be reported
+let terminalState: vscode.Memento | undefined;
+
 export async function startProxyServer(context: vscode.ExtensionContext): Promise<void> {
+  terminalState = context.globalState;
   sessionToken = context.globalState.get<string>('tpt.sessionToken');
   if (!sessionToken) {
     sessionToken = crypto.randomBytes(32).toString('hex');
@@ -381,8 +397,9 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       }
     }
 
-    // Bypass everything if master switch is off
-    if (!config.enabled) {
+    // Bypass everything if master switch is off. A dry run also takes this path: it measures the
+    // request below, then sends it exactly as the client wrote it.
+    if (!config.enabled || config.dryRun) {
       let rawBody: string;
       try {
         rawBody = await readBody(req);
@@ -401,6 +418,24 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
         isStreamingBypass = bypassBody.stream === true;
       } catch { /* non-JSON body */ }
       const bypassExtraHeaders = grokConversationHeaders(config.upstreamProvider, bypassBody);
+
+      // Measure only: the pipeline's result is not sent. It stores the per-stage counts for
+      // TPT: Show Token Savings, and its body changes are discarded.
+      if (config.enabled && config.dryRun && Array.isArray(bypassBody.messages)) {
+        try {
+          await runPipeline({
+            method: req.method ?? 'POST',
+            path: req.url ?? '/',
+            headers: req.headers as Record<string, string | string[] | undefined>,
+            // A fresh parse, so nothing the pipeline does can reach the body that is sent
+            body: JSON.parse(rawBody) as Record<string, unknown>,
+            format,
+            sessionToken: sessionToken ?? '',
+          });
+        } catch (e) {
+          log(`Dry run: measurement failed, the request is sent unchanged — ${e}`);
+        }
+      }
 
       if (isStreamingBypass) {
         await forwardStreamingRequest(
@@ -494,10 +529,12 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       return;
     }
 
-    // Routed to an OpenAI-compatible provider: only the messages endpoint is translated
+    // A translated request is the client's messages endpoint only: /v1/messages for an
+    // Anthropic-format client, /v1/chat/completions for an OpenAI-format one
     const translating = pipelineResult.translated === true;
-    if (translating && pathOnly(req.url ?? '/') !== '/v1/messages') {
-      sendErrorJson(res, 404, `TPT: ${pathOnly(req.url ?? '/')} is not translated for OpenAI-compatible providers`);
+    const clientMessagesPath = format === 'anthropic' ? '/v1/messages' : '/v1/chat/completions';
+    if (translating && pathOnly(req.url ?? '/') !== clientMessagesPath) {
+      sendErrorJson(res, 404, `TPT: ${pathOnly(req.url ?? '/')} is not translated for this provider`);
       return;
     }
 
@@ -520,8 +557,12 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
     // The router may send this request to a different provider than the global setting
     const provider: UpstreamProvider = pipelineResult.overrideUpstream?.provider ?? config.upstreamProvider;
     // The format the upstream actually speaks, which is what its usage and stream events use
-    const upstreamFormat: 'anthropic' | 'openai' = translating ? 'openai' : format;
-    const upstreamPath = translating ? '/v1/chat/completions' : upstreamRequestPath(provider, req.url ?? '/');
+    const upstreamFormat: 'anthropic' | 'openai' = translating ? (format === 'anthropic' ? 'openai' : 'anthropic') : format;
+    const upstreamPath = translating
+      ? (upstreamFormat === 'openai' ? '/v1/chat/completions' : '/v1/messages')
+      : upstreamRequestPath(provider, req.url ?? '/');
+    // Set when the client asked for usage in the stream: the converted stream then ends with it
+    const includeUsage = (parsedBody as { stream_options?: { include_usage?: unknown } }).stream_options?.include_usage === true;
 
     // Streaming path — pipe SSE chunks directly to the client
     const isStreaming = !!(pipelineResult.body as Record<string, unknown>).stream;
@@ -535,7 +576,9 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
           upstream.baseUrl, upstream.apiKey,
           upstreamPath, req.method ?? 'POST',
           req.headers, outBody, format, provider, res, extraHeaders,
-          translating ? new OpenAIStreamToAnthropic() : undefined
+          !translating ? undefined
+            : format === 'anthropic' ? new OpenAIStreamToAnthropic()
+            : new AnthropicStreamToOpenAI(includeUsage)
         );
         // Prefer the provider's own counts; the local estimates are only a fallback
         const usage = readUpstreamUsage(accumulated, upstreamFormat, true);
@@ -549,6 +592,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
           costUsd: status === 200 ? getCostUsd(model, billedIn, tokensOut, cacheOf(usage)) : 0,
           moduleActions: pipelineResult.moduleActions,
           cacheHit: false,
+          stageTokens: pipelineResult.stageTokens,
         });
         if (status === 200) {
           markConnected();
@@ -586,7 +630,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
     if (forwarded.status === 200) markConnected();
 
     // What the client receives: the upstream answer, converted back when the request was translated
-    const clientBody = translating ? toClientFormat(forwarded.status, forwarded.body) : forwarded.body;
+    const clientBody = translating ? toClientFormat(format, forwarded.status, forwarded.body) : forwarded.body;
 
     // Store under the same key Token Shield looked up with (the client's request, post-Vault).
     // Responses that call a tool are tied to this turn and are never reused. The stored body is
@@ -618,6 +662,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       costUsd: getCostUsd((pipelineResult.body as AnthropicRequest).model ?? '', billedIn, tokensOut, cacheOf(usage)),
       moduleActions: pipelineResult.moduleActions,
       cacheHit: false,
+      stageTokens: pipelineResult.stageTokens,
     });
     checkBudget().catch(() => { /* ignore */ });
     captureRateLimitHeaders(forwarded.headers as Record<string, string>);
@@ -745,10 +790,19 @@ async function injectTerminalEnv(port: number): Promise<void> {
     TPT_TOKEN: token,
   };
 
+  const previousPort = terminalState?.get<number>('tpt.terminalPort');
   try {
     for (const key of ['terminal.integrated.env.windows', 'terminal.integrated.env.linux', 'terminal.integrated.env.osx']) {
       const current = cfg.get<Record<string, string>>(key, {});
       await cfg.update(key, { ...current, ...envPatch }, vscode.ConfigurationTarget.Workspace);
+    }
+    terminalState?.update('tpt.terminalPort', port);
+    // A terminal keeps the environment it was started with, so one opened before a port move
+    // still points at the old proxy. Its shell cannot be updated from here.
+    if (previousPort !== undefined && previousPort !== port) {
+      vscode.window.showWarningMessage(
+        `TPT moved to port ${port} (it was ${previousPort}). Terminals already open still point at the old port: close them and open new ones.`
+      );
     }
   } catch (e) {
     log(`Could not write terminal environment (open a folder to enable it): ${e}`);
@@ -756,7 +810,17 @@ async function injectTerminalEnv(port: number): Promise<void> {
 }
 
 // The upstream's answer in the client's format: Anthropic for an Anthropic-format request
-function toClientFormat(status: number, body: string): string {
+// The upstream's answer in the client's format. An Anthropic-format client gets an Anthropic message
+// (converted from OpenAI chat); an OpenAI-format client gets a chat completion (converted from Anthropic).
+function toClientFormat(clientFormat: 'anthropic' | 'openai', status: number, body: string): string {
+  if (clientFormat === 'openai') {
+    if (status !== 200) return openAIErrorBody(body);
+    try {
+      return JSON.stringify(anthropicResponseToOpenAI(JSON.parse(body) as Record<string, unknown>));
+    } catch {
+      return openAIErrorBody(body);
+    }
+  }
   if (status !== 200) return anthropicErrorBody(body);
   try {
     return JSON.stringify(openAIResponseToAnthropic(JSON.parse(body) as Record<string, unknown>));

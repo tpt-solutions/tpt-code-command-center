@@ -1,5 +1,11 @@
 import { AnthropicRequest, OpenAIRequest } from '../proxy/types';
 
+// The estimated input size of the request after one stage. Stage 'original' is the client's request.
+export interface StageTokens {
+  stage: string;
+  tokens: number;
+}
+
 export interface InspectSnapshot {
   timestamp: number;
   format: 'anthropic' | 'openai';
@@ -8,6 +14,8 @@ export interface InspectSnapshot {
   moduleActions: string[];
   overrideUpstream?: { baseUrl: string; apiKey: string; model?: string };
   cacheHit: boolean;
+  stageTokens?: StageTokens[];
+  dryRun?: boolean;
 }
 
 let lastSnapshot: InspectSnapshot | undefined;

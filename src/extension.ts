@@ -7,14 +7,16 @@ import { runVault } from './modules/vault';
 import { createStatusBar, updateStatusBar, showToggleMenu, disposeStatusBar } from './ui/statusBar';
 import { showDashboard, refreshDashboard, disposeDashboard } from './ui/dashboard';
 import * as os from 'os';
-import { getStats, clearLedger, exportLedgerCsv, getMonthlyStats, setStoragePath, setOnRecordHook, flushLedger } from './ledger/ledger';
+import { getStats, clearLedger, exportLedgerCsv, getMonthlyStats, getModuleSavings, getTuningSample, setStoragePath, setOnRecordHook, flushLedger } from './ledger/ledger';
 import { startQuotaPolling, stopQuotaPolling } from './modules/quotaTracker';
 import { clearCache } from './modules/tokenShield';
-import { browseForge } from './modules/forge';
+import { browseForge, refreshInstalledForge } from './modules/forge';
 import { setWasmDir } from './modules/smartContext';
 import { showModelPicker } from './ui/modelPicker';
 import { log, getChannel, disposeChannel } from './utils/logger';
 import { getLastInspectSnapshot } from './utils/inspectStore';
+import { formatStageSavings, renderSavingsReport, tuningSuggestions } from './utils/savings';
+import { POLICY_FILE, readWorkspacePolicy, setTrustedPolicyHashes, isPolicyTrusted, markPolicyTrusted } from './modules/policy';
 import { showPromptDiff } from './ui/promptDiff';
 import { configureClineAuto } from './modules/clineConfig';
 import { runSetupWizard } from './ui/setupWizard';
@@ -55,22 +57,24 @@ function checkGitignore(context: vscode.ExtensionContext): void {
   const gitignorePath = path.join(root, '.gitignore');
   if (!fs.existsSync(gitignorePath)) return;
   const content = fs.readFileSync(gitignorePath, 'utf8');
-  // Check if .vscode/settings.json is already ignored (various common forms)
-  const alreadyIgnored = content.split('\n').some((line) => {
-    const t = line.trim();
-    return t === '.vscode/settings.json' || t === '.vscode/' || t === '.vscode';
-  });
-  if (alreadyIgnored) return;
+  // .vscode/settings.json holds the keys and session token; .tpt/ holds the ledger and cache,
+  // which contain prompts. Each is ignored when the .gitignore has it in any common form.
+  const lines = content.split('\n').map((line) => line.trim());
+  const isIgnored = (...forms: string[]) => lines.some((t) => forms.includes(t));
+  const missing: string[] = [];
+  if (!isIgnored('.vscode/settings.json', '.vscode/', '.vscode')) missing.push('.vscode/settings.json');
+  if (!isIgnored('.tpt/', '.tpt', '/.tpt/', '/.tpt')) missing.push('.tpt/');
+  if (missing.length === 0) return;
   const stateKey = 'tpt.gitignorePromptDismissed';
   if (context.globalState.get<boolean>(stateKey)) return;
   vscode.window.showWarningMessage(
-    'TPT writes API keys and a session token to .vscode/settings.json. Add it to .gitignore to avoid accidental commits?',
+    'TPT writes API keys and a session token to .vscode/settings.json, and prompts to .tpt/. Add them to .gitignore to avoid accidental commits?',
     'Add to .gitignore', 'Not now'
   ).then((choice) => {
     if (choice === 'Add to .gitignore') {
-      const entry = '\n# TPT Code Command Center — contains API keys and session token\n.vscode/settings.json\n';
+      const entry = `\n# TPT Code Command Center — contains API keys, session token and prompts\n${missing.join('\n')}\n`;
       fs.appendFileSync(gitignorePath, entry, 'utf8');
-      vscode.window.showInformationMessage('Added .vscode/settings.json to .gitignore.');
+      vscode.window.showInformationMessage(`Added ${missing.join(', ')} to .gitignore.`);
     } else {
       context.globalState.update(stateKey, true);
     }
@@ -102,6 +106,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // Guard against accidental API key commits
   checkGitignore(context);
+
+  // A workspace policy applies only once the user trusts this exact file. A changed file has a new
+  // hash, so it asks again.
+  setTrustedPolicyHashes(context.globalState.get<string[]>('tpt.policyTrust', []));
+  const policyFile = readWorkspacePolicy();
+  if (policyFile && !isPolicyTrusted(policyFile)) {
+    vscode.window.showWarningMessage(
+      `This workspace has a TPT policy (${POLICY_FILE}). It can add Vault patterns, lower cost budgets and turn on dry run. Apply it?`,
+      'Trust and apply', 'Not now'
+    ).then((choice) => {
+      if (choice === 'Trust and apply') {
+        context.globalState.update('tpt.policyTrust', markPolicyTrusted(policyFile.hash));
+        log(`Workspace policy trusted (${policyFile.hash.slice(0, 12)})`);
+      }
+    });
+  }
 
   // First-run: offer setup wizard if no API key is configured
   const current = getConfig() as unknown as Record<string, string>;
@@ -167,6 +187,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (confirm !== 'Clear') return;
       fs.unlinkSync(memPath);
       vscode.window.showInformationMessage('TPT: Memory Weaver history cleared.');
+    }),
+
+    // memory.json is the only record of what Memory Weaver summarised; this makes it readable
+    vscode.commands.registerCommand('tpt.showMemory', async () => {
+      const memPath = memoryFilePath();
+      if (!memPath || !fs.existsSync(memPath)) {
+        vscode.window.showInformationMessage('TPT: there are no Memory Weaver summaries yet.');
+        return;
+      }
+      const doc = await vscode.workspace.openTextDocument(memPath);
+      await vscode.window.showTextDocument(doc, { preview: true });
     }),
 
     vscode.commands.registerCommand('tpt.clearLedger', async () => {
@@ -235,6 +266,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('tpt.browseForge', () => browseForge()),
 
     vscode.commands.registerCommand('tpt.configureModels', () => showModelPicker()),
+
+    vscode.commands.registerCommand('tpt.showSavings', () => {
+      const snapshot = getLastInspectSnapshot();
+      if (!snapshot?.stageTokens) {
+        vscode.window.showInformationMessage('TPT: No request has been proxied yet.');
+        return;
+      }
+      const channel = getChannel();
+      channel.show(true);
+      channel.appendLine(`\n─── TPT Token Savings (last request${snapshot.dryRun ? ', dry run: sent unchanged' : ''}) ───`);
+      for (const line of formatStageSavings(snapshot.stageTokens)) channel.appendLine(line);
+    }),
 
     vscode.commands.registerCommand('tpt.inspectLast', () => {
       const snapshot = getLastInspectSnapshot();
@@ -326,6 +369,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       });
     }),
 
+    vscode.commands.registerCommand('tpt.suggestSettings', async () => {
+      const sample = await getTuningSample();
+      const c = getConfig();
+      const suggestions = tuningSuggestions(sample, {
+        memoryEnabled: c.memoryWeaver.enabled,
+        memoryThreshold: c.memoryWeaver.tokenThreshold,
+        routerEnabled: c.router.enabled,
+      });
+      const channel = getChannel();
+      channel.show(true);
+      channel.appendLine(`\n─── TPT Settings Suggestions (from ${sample.originals.length} measured requests; nothing is changed) ───`);
+      for (const line of suggestions) channel.appendLine(`• ${line}`);
+    }),
+
+    vscode.commands.registerCommand('tpt.exportSavingsReport', async () => {
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+      const { modules, measuredRequests } = await getModuleSavings(monthStart);
+      const period = now.toISOString().slice(0, 7);
+      const report = renderSavingsReport({ period, modules, measuredRequests });
+      const downloadsDir = path.join(os.homedir(), 'Downloads');
+      const outDir = fs.existsSync(downloadsDir) ? downloadsDir : (vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? os.tmpdir());
+      const outPath = path.join(outDir, `tpt-savings-${period}.md`);
+      fs.writeFileSync(outPath, report, 'utf8');
+      vscode.window.showInformationMessage(`TPT: Savings report exported to ${outPath}`, 'Open File').then((choice) => {
+        if (choice === 'Open File') vscode.env.openExternal(vscode.Uri.file(outPath));
+      });
+    }),
+
     vscode.commands.registerCommand('tpt.resetSetup', async () => {
       const confirm = await vscode.window.showWarningMessage(
         'Clear all TPT API keys and reset provider to OpenRouter?',
@@ -353,6 +425,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await startProxyServer(context);
     updateStatusBar();
     startQuotaPolling(getConfig());
+    // Forge auto-update is on by default and makes a network call when entries are installed;
+    // it runs in the background so a slow or offline registry never delays the proxy
+    if (getConfig().forge.autoUpdate) {
+      refreshInstalledForge().catch((e) => log(`Forge: auto-update failed — ${e}`));
+    }
     setOnRecordHook(() => {
       refreshDashboard();
       updateStatusBar();

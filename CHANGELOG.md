@@ -9,6 +9,39 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+- **Forge installs take effect.** Installed entries were written to `.tpt/forge/` but never read. Vault patterns now join the Vault, router rules apply when `tpt.router.rules` is empty, and a system prompt replaces the Silent Edit schema. Installed files use a new envelope format (`name`, `type`, `version`, `content`); files written by 0.1.1 are ignored, so reinstall them.
+- **`tpt.forge.autoUpdate`** re-installs the workspace's Forge entries from the registry on activation, in the background.
+- **Forge registry checks** — the registry URL and remote entry URLs go through the same address check as the upstream URLs.
+- **Stream accounting buffer is capped** — a reply over 8 MB keeps its first 8 MB and last 256 KB. Silent Edit blocks in the dropped middle are not applied, and the Output Channel says so.
+- **`.gitignore` prompt** now covers `.tpt/` as well as `.vscode/settings.json`.
+
+- **Setup wizard** offers to point a tool at the proxy after a successful connection check: Claude Code, Cline, Roo Code, Continue, or another tool.
+- **Pricing cache** is kept in the global storage folder when no workspace folder is open, as the ledger already was.
+- **Port move warning** — if TPT starts on a different port than the terminals were given, it says so and asks for new terminals.
+
+- **Ledger is merged, not overwritten.** Each window now adds its own new rows to `.tpt/ledger.db` as it is on disk, so rows from another VS Code window on the same workspace are kept. Clearing the ledger also clears the file. Stats in an open window still count from its own start, plus the file as it was when the window opened.
+- **Memory Weaver summaries stay stable.** The summarised part of the conversation is cut on 8-message blocks, and a summary is reused for the same prefix. Repeat requests no longer call the summariser again, and the upstream prompt cache can hit for a whole block.
+
+- **Registry entries are pinned.** The three official Forge entries carry a `sha256`, so a changed file is refused at install.
+
+- **Silent Edit rejects an end line past the end of the file** instead of clamping it. A model with a wrong line count can no longer rewrite everything down to the end of the file. The edit is skipped and logged.
+
+- **Router rules apply to every request.** A rule that sends requests to the Anthropic provider used to be skipped for OpenAI-format clients. The pipeline now translates them, so the rule applies.
+
+### Added
+- **Dry run** (`tpt.dryRun`). Measures what the modules would change, and sends every request exactly as the client wrote it. No cached answers are returned, and Memory Weaver uses only its local extractive backend, so a dry run makes no model calls for summaries.
+- **Per-stage token savings.** Each request records its estimated size after every stage. `TPT: Show Token Savings (Last Request)` prints them to the Output Channel.
+- **Cross-session memory recall** (`tpt.memoryWeaver.recall.enabled`, off by default). On the first turn of a new conversation, the Memory Weaver summaries from earlier sessions that share words with the request are added to the system prompt, marked as possibly not applicable. The cost shows as its own "Memory Recall" stage.
+- **Team policy file** (`tpt-policy.json` in the repository root). It can add Vault patterns, lower cost budgets and turn on dry run. It cannot add router rules or change the provider. It applies only after the user trusts that exact file, and a changed file asks again. The file sits at the root rather than in `.tpt/` so a team can commit it.
+- **Settings suggestions from history.** `TPT: Suggest Settings From History` reads the measured requests and says what it sees for Memory Weaver and the router. It suggests only, and needs 20 measured requests.
+- **Savings by module.** The dashboard shows what each module removed or added, summed over measured requests. `TPT: Export Savings Report (This Month)` writes the same as a Markdown report. The ledger gains a `stage_tokens` column, added in place for existing databases. All figures are estimates (characters ÷ 4), not billed tokens.
+- **OpenAI-format clients can use the Anthropic provider.** Chat requests are converted to the Anthropic messages format, and the answers (including streamed ones) are converted back to OpenAI chat. This applies whenever the provider is `anthropic`, with or without a router rule. The other direction (Anthropic-format client to an OpenAI-compatible provider) still needs a router rule, since some providers in that group speak the Anthropic format too.
+- `TPT: Show Memory Weaver Summaries` opens `.tpt/memory.json`.
+- Forge contribution guide and schema reference (`forge-registry/CONTRIBUTING.md`).
+- Issue and pull request templates under `.github/`.
+- README: Troubleshooting and FAQ sections, the commands and settings missing from the reference, and a note on Forge's network calls.
+
 ---
 
 ## [0.1.1] — 2026-10-28

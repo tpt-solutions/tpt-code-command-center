@@ -8,7 +8,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as https from 'https';
-import * as vscode from 'vscode';
+import { dataDir } from '../utils/dataDir';
 
 const CACHE_TTL_MS      = 24 * 60 * 60 * 1000;        // refresh every 24 hours
 const CACHE_MAX_AGE_MS  = 90 * 24 * 60 * 60 * 1000;   // discard cache older than 3 months
@@ -87,12 +87,9 @@ export function getCostUsd(model: string, tokensIn: number, tokensOut: number, c
 
 // ── cache persistence ─────────────────────────────────────────────────────────
 
+// The workspace's .tpt folder, or the global storage folder when no folder is open
 function getCacheDir(): string | undefined {
-  const folders = vscode.workspace.workspaceFolders;
-  if (!folders?.length) return undefined;
-  const dir = path.join(folders[0].uri.fsPath, '.tpt');
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  return dir;
+  return dataDir();
 }
 
 interface PricingJson {

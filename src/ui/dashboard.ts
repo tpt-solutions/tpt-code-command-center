@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { getStats, getModelBreakdown, getMonthlyStats, LedgerStats, ModelStat, MonthStat } from '../ledger/ledger';
+import { getStats, getModelBreakdown, getMonthlyStats, getModuleSavings, LedgerStats, ModelStat, MonthStat } from '../ledger/ledger';
+import { ModuleSavings, stageLabel } from '../utils/savings';
 import { getProxyUrl } from '../proxy/server';
 import { hasConnected } from '../utils/connection';
 import { getConfig, resolveUpstreamUrl, workspaceRoots } from '../utils/config';
@@ -35,10 +36,11 @@ export function showDashboard(context: vscode.ExtensionContext): void {
 
 export async function refreshDashboard(): Promise<void> {
   if (!panel) return;
-  const [stats, modelBreakdown, monthlyStats] = await Promise.all([
+  const [stats, modelBreakdown, monthlyStats, savings] = await Promise.all([
     getStats(),
     getModelBreakdown(),
     getMonthlyStats(12),
+    getModuleSavings(0),
   ]);
   const config = getConfig();
   const proxyUrl = getProxyUrl();
@@ -46,7 +48,7 @@ export async function refreshDashboard(): Promise<void> {
   const weave = config.weave.enabled
     ? await weaveDashboardSnapshot(config.weave.cliPath, workspaceRoots(), config.weave.level).catch(() => undefined)
     : undefined;
-  panel.webview.html = buildHtml(stats, modelBreakdown, monthlyStats, config, proxyUrl, quota, weave);
+  panel.webview.html = buildHtml(stats, modelBreakdown, monthlyStats, config, proxyUrl, quota, weave, savings);
 }
 
 function buildHtml(
@@ -57,8 +59,13 @@ function buildHtml(
   proxyUrl: string | undefined,
   quota: QuotaSnapshot | undefined,
   weave: { repo: WeaveRepoStats; session: WeaveSessionStats } | undefined,
+  savings: { modules: ModuleSavings[]; measuredRequests: number },
 ): string {
   const nonce = Math.random().toString(36).substring(2);
+
+  const savingsRows = savings.modules
+    .map((m) => `<tr><td>${stageLabel(m.module)}</td><td style="color:#4caf50">−${m.saved.toLocaleString()}</td><td>${m.added > 0 ? '+' + m.added.toLocaleString() : '—'}</td><td>${m.requests.toLocaleString()}</td></tr>`)
+    .join('');
 
   const modules = [
     { name: 'Vault', enabled: config.vault.enabled, icon: '🛡️' },
@@ -246,6 +253,13 @@ function buildHtml(
   <table>
     <thead><tr><th>Model</th><th>Requests</th><th>Tokens</th><th>Cost</th></tr></thead>
     <tbody>${modelRows || '<tr><td colspan="4">No data yet</td></tr>'}</tbody>
+  </table>
+
+  <h2>Savings by Module</h2>
+  <p style="opacity:.7;font-size:12px">Estimated input tokens (characters ÷ 4) over ${savings.measuredRequests.toLocaleString()} measured requests. Not billed tokens.</p>
+  <table>
+    <thead><tr><th>Module</th><th>Removed</th><th>Added</th><th>Requests changed</th></tr></thead>
+    <tbody>${savingsRows || '<tr><td colspan="4">No measured requests yet</td></tr>'}</tbody>
   </table>
 
   <h2>Provider Quota</h2>

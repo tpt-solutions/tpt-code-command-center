@@ -114,11 +114,11 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [x] **Memory Weaver orphans tool pairs** — window extends back so a tool result always keeps its `tool_use`; token estimate counts tool blocks; corrupt `memory.json` is recovered and writes are atomic
 - [x] **Vault gaps** — array-form `tool_result`, `tool_use` input and OpenAI `tool_calls` are scanned; `Authorization: Bearer`, `gho_/ghs_/ghu_/ghr_`, `sk-ant-`, `sk-`, `xox*`, `AIza` and full PEM blocks are covered; the 200 KB fail-open skip is removed
 - [x] **Forge built-in vault patterns invalid** — the vault accepts a leading `(?i)` as the `i` flag
-- [ ] **Forge installs never consumed** — `.tpt/forge/` is written but never read; `forge.autoUpdate` does nothing
+- [x] **Forge installs never consumed** — installed entries are now read on each request: vault patterns join the Vault, router rules apply when `tpt.router.rules` is empty, and a system prompt replaces the Silent Edit schema. `forge.autoUpdate` re-installs the workspace's entries on activation. Installed files are envelopes (`name`, `type`, `version`, `content`); older bare files are ignored (`forge.test.ts`)
 
 ### Robustness
 - [x] Request handler wrapped — a throw answers 500 instead of hanging the socket
-- [x] Streaming: upstream aborted when the client disconnects; backpressure respected; idle timeouts; mid-stream cut-off recorded as 502. [ ] Accumulated stream buffer is still uncapped
+- [x] Streaming: upstream aborted when the client disconnects; backpressure respected; idle timeouts; mid-stream cut-off recorded as 502. [x] Accumulated stream buffer capped (`utils/streamBuffer.ts`): the first 8 MB and the last 256 KB are kept; Silent Edit blocks in the dropped middle are not applied, and the Output Channel says so
 - [x] Bodyless requests (e.g. `GET /v1/models`) passed through instead of 400. `/v1/v1` doubling for OpenAI-format requests fixed (client and provider base URLs both end in `/v1`). `/v1/messages/count_tokens` was already detected as Anthropic
 - [x] Start-up: terminal-env failure no longer aborts the proxy; env is written after the port is bound (no stale port after fallback); commands register before the proxy starts, so a failed start keeps them working
 - [x] Bind and advertise `127.0.0.1` instead of `localhost`
@@ -130,36 +130,36 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [x] Smart Context: replaces only file-read results (bash, search and log output pass through intact); the path comes from the paired `tool_use`; OpenAI `tool` messages handled; parse trees freed. [ ] Outline heuristics for languages without a bundled grammar are still basic
 - [x] Silent Edit: invalid line numbers rejected and types checked; a triple backtick inside the JSON no longer breaks parsing; all text blocks are read; stream and non-stream replies both go through the confirmation prompt. Edits are left unsaved on purpose
 - [x] Router: keyword match uses only the user's typed text (not tool output); extension detection ends at whitespace/punctuation; `maxTokens` counts tool blocks; empty `match: {}` skipped; unknown providers skipped; the built-in code rule now comes before the short-prompt rule
-- [x] Prompt Cache: never exceeds four breakpoints (counts the client's own); thinking and empty blocks are skipped. [x] Mistral key only set when the request really goes to Mistral (the router now runs first). [ ] Memory Weaver window shift still defeats caching
+- [x] Prompt Cache: never exceeds four breakpoints (counts the client's own); thinking and empty blocks are skipped. [x] Mistral key only set when the request really goes to Mistral (the router now runs first). [x] Memory Weaver window shift: summaries cut on fixed 8-message blocks and are reused by prefix hash, so the summarised prefix is stable for a block of turns (`summaryBoundary`, `memoryWeaverRun.test.ts`)
 - [x] Weave: `..` containment fixed for both the name check and path resolution. The query and its skeleton cache are reused across requests, and skeletons are keyed on mtime and size, so edits refresh them. Ranged reads (offset/limit or line numbers) are passed through unchanged by Smart Context, so the lines the model asked for stay intact
-- [x] Dead/stub code: `pruneMemory` now clears Memory Weaver history (with confirmation); `clearLedger` has a command; `getDailySpendUsd` and `ProxyResponse` removed. [ ] `memory.json` is still write-only
-- [x] Pricing: lookup is vendor-aware with longest-match (Anthropic dated ids now resolve); empty model → cost 0; negative OpenRouter prices ignored; 24 h refresh recurs. [ ] No pricing without a workspace folder
+- [x] Dead/stub code: `pruneMemory` now clears Memory Weaver history (with confirmation); `clearLedger` has a command; `getDailySpendUsd` and `ProxyResponse` removed. [x] `memory.json` is readable: `TPT: Show Memory Weaver Summaries` opens it. Cross-session recall is still the Phase 13 backlog item
+- [x] Pricing: lookup is vendor-aware with longest-match (Anthropic dated ids now resolve); empty model → cost 0; negative OpenRouter prices ignored; 24 h refresh recurs. [x] Pricing cache falls back to the global storage folder when no workspace is open (`utils/dataDir.ts`, shared with the ledger)
 - [ ] Cost accuracy: [x] the ledger records the provider's own token counts (`ledger/usage.ts`), falling back to the `chars/4` estimate only when none come back. [x] Cached prompt tokens are billed at OpenRouter's cache read and write rates; a model without them falls back to the prompt rate. [x] `exportMonthlySummary` Requests column is now a real per-month count. [x] Savings averages use real upstream calls only (cache hits excluded)
 
 ### Security
 - [x] Path allowlist — only `/v1/messages`, `/v1/chat/completions`, `/v1/models` and `/v1/embeddings` are proxied; anything else returns 404
-- [x] SSRF check covers bracketed and IPv4-mapped IPv6, decimal/hex IPv4, CGNAT, `fc00::/7`, `fe80::/10`. Ollama base URLs use it. [ ] Forge registry URL is https-only but doesn't use this check
+- [x] SSRF check covers bracketed and IPv4-mapped IPv6, decimal/hex IPv4, CGNAT, `fc00::/7`, `fe80::/10`. Ollama base URLs use it. [x] Forge registry URL is https-only and now also goes through this check (numeric private and loopback IPs refused; `localhost` by name allowed, as for Ollama); remote entry URLs are checked the same way at install
 - [x] Unknown router provider skipped (no longer falls through to OpenRouter's key)
-- [x] Forge: timeout, status and size checks, https only. Entries may pin a `sha256`; a mismatch refuses the install (`forge.test.ts`). [ ] Registry entries do not carry hashes yet, so the pin is optional and most entries install unverified; remote entries still override built-ins and can fetch arbitrary URLs
+- [x] Forge: timeout, status and size checks, https only. Entries may pin a `sha256`; a mismatch refuses the install (`forge.test.ts`). [x] The three registry entries now carry `sha256` pins over the committed bytes (the working copy has CRLF, so the pins are the git blob digests, not the checkout's). [ ] Community entries still need pins when they are added; remote entries still override built-ins and can fetch arbitrary https URLs; remote entries still override built-ins and can fetch arbitrary URLs
 - [x] Session token no longer printed to the Output Channel (copy with `TPT: Copy Session Token`); constant-time comparison; repeated header rejected
-- [x] API keys live in SecretStorage and are moved out of `settings.json` on first run; the key settings are marked deprecated (`secrets.test.ts`). The session token was already in global state, not settings. [ ] `.gitignore` check still misses the `.tpt/` folder (ledger and cache hold prompts)
+- [x] API keys live in SecretStorage and are moved out of `settings.json` on first run; the key settings are marked deprecated (`secrets.test.ts`). The session token was already in global state, not settings. [x] `.gitignore` check now covers the `.tpt/` folder as well as `.vscode/settings.json` (ledger and cache hold prompts)
 - [x] Memory Weaver: corrupt `memory.json` no longer throws into the pipeline; the Ollama URL comes from the validated setting; the proxy backend keeps base path prefixes
 
 ## Phase 12 — Adoption & Usability (Pending)
 
 - [x] The session token is also accepted as the client's API key (`Authorization: Bearer` or `x-api-key`), so Roo Code and Continue, which have no custom-header field in their OpenAI-compatible settings, can connect. The real provider key is still added by the proxy
-- [ ] **Connect wizard** — [x] provider and key, and a "Test connection" check at the end (the result shows in the message, with Open Settings on failure). [ ] Tool picker (Claude Code, Cline, Roo, Continue); [ ] preset choice inside the wizard; [ ] replace the dismissible toast with a VS Code `walkthroughs` contribution
+- [ ] **Connect wizard** — [x] provider and key, and a "Test connection" check at the end (the result shows in the message, with Open Settings on failure). [x] Tool picker after a good check (Claude Code, Cline, Roo, Continue, other); [ ] preset choice inside the wizard; [ ] replace the dismissible toast with a VS Code `walkthroughs` contribution
 - [x] `TPT: Copy Session Token`, `TPT: Copy Claude Code Setup Snippet` (PowerShell + bash), `TPT: Test Connection` and `TPT: Open Settings` added; the 401 message names the copy command
-- [ ] Verify `tpt.configureCline` writes keys Cline actually reads; set the model name; reconcile `${url}` vs `${url}/v1` between docs and code
-- [ ] Refresh stale terminal env on port change; warn when existing terminals hold an old URL (env is now rewritten on every activation after bind; already-open terminals keep the old value)
+- [ ] Verify `tpt.configureCline` writes keys Cline actually reads (`cline.apiProvider`, `cline.openAiBaseUrl`, `cline.openAiHeaders`): not verified. Cline is not installed here, and a web search did not confirm the names. Check them by picking OpenAI Compatible in Cline's UI, entering a base URL and header, then reading the settings it writes. Set the model name; reconcile `${url}` vs `${url}/v1` between docs and code
+- [x] Warn when the port moves: the last port given to terminals is remembered, and a change shows a message asking for new terminals (env is rewritten on every activation after bind). [ ] Refreshing already-open terminals is not possible through the VS Code API, so it stays a warning
 - [x] **Presets** — `TPT: Apply Settings Preset` offers Frugal, Privacy-first, Local only (Ollama) and Anthropic tiering; writes to workspace settings, or user settings when no folder is open. A test checks each key is a declared setting
 - [x] `examples/`: Claude Code, Cline and local-model guides; router and Vault config samples; smoke-test scripts for bash and PowerShell. [x] Roo Code and Continue guides. [x] Claude Code settings-file recipe (`claude-code-settings.json`, user-level). [ ] A sample ledger CSV
-- [ ] Forge starter pack bundle + contribution template/schema doc
-- [ ] README sync with `package.json`: missing commands (`configureModels`, `inspectLast`, `showPromptDiff`, `exportLedger`, `configureCline`, `runSetupWizard`, `resetSetup`, `exportMonthlySummary`) and settings (`costBudget.*`, `tokenShield.semanticCache.*`, `forge.registryUrl`, memoryWeaver models, per-provider keys); add Troubleshooting (401, port, stale terminal) and FAQ; link `examples/`
-- [ ] Link `claude-compare.md` from README; replace estimates with measured numbers
-- [ ] Surprising defaults: document that Router/Silent Edit are off and that routing to a different provider needs that provider's key; Forge `autoUpdate` makes network calls by default — add consent/privacy note
+- [x] Contribution guide and schema doc (`forge-registry/CONTRIBUTING.md`). [ ] Starter pack: the three built-in configs are the pack for now; more are still to be written
+- [x] README sync with `package.json`: every command and the missing settings (`costBudget.*`, `tokenShield.semanticCache.*`, `forge.registryUrl`, memoryWeaver models, per-provider keys) are listed; Troubleshooting (401, port, stale terminal) and FAQ added. [x] Link `examples/` from the README
+- [x] Link `claude-compare.md` from README (flagged as estimates). [ ] Replace the estimates with measured numbers
+- [x] Surprising defaults: README now says Router/Silent Edit are off, that routing to another provider needs its key, and where Forge auto-update and the OpenRouter pricing fetch make network calls
 - [x] Dashboard setup guide stays until the first real upstream answer (persisted as `tpt.connected`); the Output Channel no longer opens on every activation
-- [x] CI: `.github/workflows/ci.yml` runs lint, compile and tests on Ubuntu, Windows and macOS (not yet run on GitHub). [ ] Publish workflow; issue/PR templates (ask for `tpt.inspectLast` output)
+- [x] CI: `.github/workflows/ci.yml` runs lint, compile and tests on Ubuntu, Windows and macOS (not yet run on GitHub). [x] Issue and PR templates (bug report asks for `TPT: Inspect Last Request` output). [ ] Publish workflow
 - [x] ESLint config added (`.eslintrc.json`); `npm run lint` passes. `test` lists all test files explicitly (a glob would need Node 21+)
 - [x] `package.json` repository, bugs and homepage point at `tpt-solutions/tpt-code-command-center`. `.vscodeignore` excludes `CLAUDE.md` and `claude-compare.md` (check the `.vsix` contents once packaged)
 - [ ] `package.json`: real `publisher` (needs a VS Code Marketplace publisher account, so it stays with you). [x] `license` is `(MIT OR Apache-2.0)`, matching the LICENSE-MIT and LICENSE-APACHE files. [ ] `galleryBanner` (optional)
@@ -167,26 +167,26 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 
 ## Phase 13 — Innovation Ideas (Backlog)
 
-- [ ] **Dry-run mode** — show per-stage token savings on the last request without altering traffic, so users trust modules before enabling them
-- [ ] Per-module savings attribution in the dashboard + shareable monthly savings report
-- [ ] Auto-tuning — suggest router rules and Memory Weaver thresholds from ledger history
-- [ ] Cross-session memory recall — inject relevant `memory.json` summaries back into new conversations
-- [ ] Workspace policy file (`.tpt/policy.json`) for team-shared Vault/Router/budget rules, with a trust prompt for cloned repos
-- [ ] Request replay / A-B compare across models using the ledger
+- [x] **Dry-run mode** — `tpt.dryRun` measures what the modules would change and sends every request as the client wrote it (no cached answers, Memory Weaver extractive only). `TPT: Show Token Savings (Last Request)` prints the per-stage counts (`pipelineDryRun.test.ts`). The "without altering traffic" part is covered by unit tests; the server's dry-run branch has no end-to-end test yet
+- [x] Per-module savings attribution in the dashboard ("Savings by Module") + shareable monthly savings report (`TPT: Export Savings Report (This Month)`, Markdown in Downloads). Figures are estimates (characters ÷ 4 per stage), stored per request in the ledger's `stage_tokens` column, which is added in place for older ledgers (`savingsReport.test.ts`)
+- [x] Auto-tuning — `TPT: Suggest Settings From History` reads the ledger and suggests (never sets) a Memory Weaver fix or a router trial. Needs 20 measured requests (`tuningSuggestions.test.ts`). Router suggestions are size-based only: nothing measures the cost of the model that answers. [ ] Suggested router rules and threshold values, rather than the pointers given now
+- [x] Cross-session memory recall — opt-in (`tpt.memoryWeaver.recall.enabled`, off by default). On the first turn of a conversation, the saved summaries that share at least a fifth of the request's words (up to two) go in the system prompt, marked as possibly not applicable. Its cost is its own stage, "Memory Recall" (`recall.test.ts`). [ ] Recall from the `.tpt/memory.json` summaries only; there is no index beyond word overlap
+- [x] Workspace policy file for team-shared rules, with a trust prompt for cloned repos. Lives at `tpt-policy.json` in the repo root, not `.tpt/policy.json`: `.tpt/` is git-ignored, so a policy there could not be shared. It can only tighten: Vault patterns, lower cost budgets, dry run on. It cannot add router rules or change the provider. It applies only after the user trusts that exact file (by hash), so a changed file asks again (`policy.test.ts`). [ ] Policy status command; a warning for a broken file (it is ignored silently now)
+- [ ] Request replay / A-B compare across models using the ledger — **not built, by recommendation**: the ledger stores no prompts, and replay needs the request bodies, so it would mean keeping prompts on disk. If wanted, it should be an explicit opt-in that stores prompts, not a default
 - [x] Vault preview: `TPT: Test Vault Patterns on Selection` shows the redacted text for the selection or typed input
-- [ ] Anonymous opt-in adoption metrics (currently zero telemetry, so adoption can't be measured)
-- [x] Cross-format routing, Anthropic → OpenAI-compatible direction: requests, answers, streamed text and tool calls (`translate.test.ts`, end-to-end in `proxy.server.integration.test.ts`). [ ] The reverse direction (OpenAI-format client to the Anthropic provider) and count_tokens translation are still open
+- [ ] Anonymous opt-in adoption metrics — **not built, by recommendation**: the extension sends nothing anywhere except the provider the user chose and the two checks in the README, and that is a promise to users. Adoption can be measured from GitHub and Marketplace counts instead
+- [x] Cross-format routing, Anthropic → OpenAI-compatible direction: requests, answers, streamed text and tool calls (`translate.test.ts`, end-to-end in `proxy.server.integration.test.ts`). [x] The reverse direction, OpenAI-format client to the Anthropic provider: chat requests, answers, streamed text and tool calls, and usage when `include_usage` is set (`translateReverse.test.ts`, `pipelineReverse.test.ts`). It applies whenever the provider is `anthropic`, with or without a router rule. The server wiring has no end-to-end test: the Anthropic base URL is fixed in code, so the mock upstream cannot stand in for it. [ ] count_tokens translation are still open
 - [x] Groq and Google Gemini providers (done, see Phase 10)
 
 ## Phase 14 — Test Coverage Gaps (In progress)
 
-Automated: `npm run compile` clean; `npm test` 164/164 passing; `npm run lint` clean.
+Automated: `npm run compile` clean; `npm test` 302/302 passing; `npm run lint` clean.
 
 - [x] `runRouter`: rule matching, returned provider, unknown provider, empty match, format mismatch, keyword matching ignores tool output, built-in rule order (`routerRules.test.ts`). [ ] Override applied to the upstream request (needs an integration test)
-- [x] Token Shield: key scope (model, system, format), tool-call detection (`tokenShield.test.ts`). [ ] Eviction SQL, TTL expiry, semantic cache
-- [x] Memory Weaver: `pairSafeTail` and extractive pairing (`memoryWeaver.test.ts`). [ ] Threshold and summariser backends
+- [x] Token Shield: key scope (model, system, format), tool-call detection (`tokenShield.test.ts`). [x] Eviction and TTL expiry (`tokenShieldStore.test.ts`, real store with the clock mocked). [ ] Semantic cache
+- [x] Memory Weaver: `pairSafeTail` and extractive pairing (`memoryWeaver.test.ts`). [x] Threshold, extractive window size and tool-pair safety, unknown backends (`memoryWeaverRun.test.ts`). [x] Ollama and proxy summariser backends, memo reuse, and fall-through when Ollama is unreachable (`summariserBackends.test.ts`, local fake server)
 - [x] Smart Context: read-only replacement, OpenAI `tool` messages, size threshold (`weave.test.ts`). [ ] Outline correctness for each language
-- [x] Silent Edit: path containment, range validation (`editSafety.test.ts`), block parsing (`silentEditParse.test.ts`). [ ] `applyEdit` behaviour
+- [x] Silent Edit: path containment, range validation (`editSafety.test.ts`), block parsing (`silentEditParse.test.ts`). [x] `applyEdit` behaviour (`silentEditApply.test.ts`: range mapping, workspace containment, unopenable file, VS Code rejecting the batch, no folder open)
 - [x] Forge: built-in regex validity (`forgeBuiltins.test.ts`): every vault pattern compiles and passes the ReDoS guard; every router rule names a real provider
 - [x] Vault: Bearer, array `tool_result`, `tool_use` input, `tool_calls`, PEM blocks, large blocks, `(?i)` custom patterns, ReDoS guard (`vaultExtended.test.ts`). [ ] Redaction count
 - [x] Prompt Cache: existing `cache_control`, thinking blocks, breakpoint limit (`promptCacheLimits.test.ts`)

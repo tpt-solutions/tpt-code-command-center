@@ -14,7 +14,7 @@ const shortChat: Message[] = [{ role: 'user', content: 'hi there' }];
 
 test('runRouter: matching rule returns the routed provider and model', () => {
   const rules = [{ match: { maxTokens: 2000 }, model: 'gpt-4o-mini', provider: 'openai' }];
-  const result = runRouter({ messages: shortChat }, rules, 'openai');
+  const result = runRouter({ messages: shortChat }, rules);
   assert.ok(result);
   assert.equal(result.model, 'gpt-4o-mini');
   assert.equal(result.provider, 'openai');
@@ -22,29 +22,24 @@ test('runRouter: matching rule returns the routed provider and model', () => {
 
 test('runRouter: unknown provider is skipped (would otherwise send the OpenRouter key elsewhere)', () => {
   const rules = [{ match: { maxTokens: 2000 }, model: 'x', provider: 'not-a-provider' }];
-  assert.equal(runRouter({ messages: shortChat }, rules, 'openai'), undefined);
+  assert.equal(runRouter({ messages: shortChat }, rules), undefined);
 });
 
 test('runRouter: a rule with no criteria is skipped instead of catching every request', () => {
   const rules = [{ match: {}, model: 'x', provider: 'openai' }];
-  assert.equal(runRouter({ messages: shortChat }, rules, 'openai'), undefined);
+  assert.equal(runRouter({ messages: shortChat }, rules), undefined);
 });
 
 test('runRouter: an Anthropic-format request can be routed to an OpenAI-compatible provider (translated)', () => {
   const rules = [{ match: { maxTokens: 2000 }, model: 'gpt-4o-mini', provider: 'openrouter' }];
-  const result = runRouter({ messages: shortChat }, rules, 'anthropic');
+  const result = runRouter({ messages: shortChat }, rules);
   assert.ok(result);
   assert.equal(result.provider, 'openrouter');
 });
 
-test('runRouter: an OpenAI-format request is not routed to the Anthropic provider (no translation that way)', () => {
+test('runRouter: a rule to the Anthropic provider applies to every request (the pipeline translates OpenAI-format ones)', () => {
   const rules = [{ match: { maxTokens: 2000 }, model: 'claude-haiku-5-5', provider: 'anthropic' }];
-  assert.equal(runRouter({ messages: shortChat }, rules, 'openai'), undefined);
-});
-
-test('runRouter: an anthropic-provider rule applies to anthropic-format requests', () => {
-  const rules = [{ match: { maxTokens: 2000 }, model: 'claude-haiku-5-5', provider: 'anthropic' }];
-  const result = runRouter({ messages: shortChat }, rules, 'anthropic');
+  const result = runRouter({ messages: shortChat }, rules);
   assert.ok(result);
   assert.equal(result.provider, 'anthropic');
 });
@@ -56,7 +51,7 @@ test('runRouter: keyword matches only the user\'s typed text, not tool output', 
     { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ERROR: fix this now' }] as never },
   ];
   const rules = [{ match: { keywords: ['error'] }, model: 'x', provider: 'openai' }];
-  assert.equal(runRouter({ messages }, rules, 'openai'), undefined);
+  assert.equal(runRouter({ messages }, rules), undefined);
 });
 
 test('getLastUserContent: skips a tool-result-only user turn and returns the typed text', () => {
@@ -90,7 +85,7 @@ test('estimateTokensInMessages: tool_result content is counted, so large tool co
 
 test('built-in rules: a small code request reaches the code model, not the short-prompt model', () => {
   const messages: Message[] = [{ role: 'user', content: 'fix src/index.ts please' }];
-  const result = runRouter({ messages }, [], 'openai');
+  const result = runRouter({ messages }, []);
   assert.ok(result);
   assert.equal(result.model, 'openai/gpt-4o');
 });
