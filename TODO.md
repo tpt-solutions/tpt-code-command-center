@@ -147,12 +147,13 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 
 ## Phase 12 — Adoption & Usability (Pending)
 
+- [x] The session token is also accepted as the client's API key (`Authorization: Bearer` or `x-api-key`), so Roo Code and Continue, which have no custom-header field in their OpenAI-compatible settings, can connect. The real provider key is still added by the proxy
 - [ ] **Connect wizard** — [x] provider and key, and a "Test connection" check at the end (the result shows in the message, with Open Settings on failure). [ ] Tool picker (Claude Code, Cline, Roo, Continue); [ ] preset choice inside the wizard; [ ] replace the dismissible toast with a VS Code `walkthroughs` contribution
 - [x] `TPT: Copy Session Token`, `TPT: Copy Claude Code Setup Snippet` (PowerShell + bash), `TPT: Test Connection` and `TPT: Open Settings` added; the 401 message names the copy command
 - [ ] Verify `tpt.configureCline` writes keys Cline actually reads; set the model name; reconcile `${url}` vs `${url}/v1` between docs and code
 - [ ] Refresh stale terminal env on port change; warn when existing terminals hold an old URL (env is now rewritten on every activation after bind; already-open terminals keep the old value)
 - [x] **Presets** — `TPT: Apply Settings Preset` offers Frugal, Privacy-first, Local only (Ollama) and Anthropic tiering; writes to workspace settings, or user settings when no folder is open. A test checks each key is a declared setting
-- [x] `examples/`: Claude Code, Cline and local-model guides; router and Vault config samples; smoke-test scripts for bash and PowerShell. [ ] Roo and Continue guides, a sample ledger CSV, and a `.claude/settings.json` recipe
+- [x] `examples/`: Claude Code, Cline and local-model guides; router and Vault config samples; smoke-test scripts for bash and PowerShell. [x] Roo Code and Continue guides. [ ] A sample ledger CSV and a `.claude/settings.json` recipe
 - [ ] Forge starter pack bundle + contribution template/schema doc
 - [ ] README sync with `package.json`: missing commands (`configureModels`, `inspectLast`, `showPromptDiff`, `exportLedger`, `configureCline`, `runSetupWizard`, `resetSetup`, `exportMonthlySummary`) and settings (`costBudget.*`, `tokenShield.semanticCache.*`, `forge.registryUrl`, memoryWeaver models, per-provider keys); add Troubleshooting (401, port, stale terminal) and FAQ; link `examples/`
 - [ ] Link `claude-compare.md` from README; replace estimates with measured numbers
