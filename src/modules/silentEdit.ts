@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { AnthropicRequest, OpenAIRequest } from '../proxy/types';
 import { log } from '../utils/logger';
+import { isValidEditRange, resolveWorkspaceFile } from '../utils/editSafety';
 
 const SILENT_EDIT_SCHEMA = `
 You can apply file edits without showing markdown diffs by outputting a JSON block in this exact format:
@@ -11,13 +12,40 @@ Use this format when making code changes. Multiple edits can be output as separa
 Normal text responses are fine when no edits are needed.
 `;
 
-const TPT_EDIT_RE = /```tpt-edit\s*([\s\S]*?)```/g;
+// The block ends at a fence that sits alone at the end of its line. A triple backtick inside
+// the JSON (for example in Markdown content) is followed by more text on the same line, so it
+// does not close the block early.
+const TPT_EDIT_SOURCE = '```tpt-edit\\s*([\\s\\S]*?)\\n?\\s*```(?=[ \\t]*(?:\\r?\\n|$))';
 
 export interface SilentEditInstruction {
   file: string;
   startLine: number;
   endLine: number;
   newContent: string;
+}
+
+function isValidInstruction(value: unknown): value is SilentEditInstruction {
+  const v = value as Partial<SilentEditInstruction> | null;
+  return !!v &&
+    typeof v.file === 'string' &&
+    typeof v.newContent === 'string' &&
+    Number.isInteger(v.startLine) &&
+    Number.isInteger(v.endLine);
+}
+
+// Pulls every well-formed tpt-edit block out of a model reply. Malformed blocks are skipped.
+export function extractEditInstructions(text: string): SilentEditInstruction[] {
+  if (!text.includes('```tpt-edit')) return [];
+  const re = new RegExp(TPT_EDIT_SOURCE, 'g');
+  const out: SilentEditInstruction[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    try {
+      const parsed: unknown = JSON.parse(match[1].trim());
+      if (isValidInstruction(parsed)) out.push(parsed);
+    } catch { /* not JSON — skip this block */ }
+  }
+  return out;
 }
 
 export function runSilentEditInjection(
@@ -53,36 +81,27 @@ export function runSilentEditInjection(
   return { ...b, messages };
 }
 
+// Anthropic replies can start with thinking or tool_use blocks, so every text block counts
+function anthropicText(parsed: { content?: Array<{ type?: string; text?: string }> }): string {
+  return (parsed.content ?? [])
+    .filter((b) => b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text as string)
+    .join('\n');
+}
+
 export async function handleSilentEditResponse(responseBody: string): Promise<string> {
   let responseText: string;
   try {
     const parsed = JSON.parse(responseBody);
-    // Anthropic format
-    responseText = parsed.content?.[0]?.text ?? '';
+    responseText = anthropicText(parsed);
     // OpenAI format
     if (!responseText) responseText = parsed.choices?.[0]?.message?.content ?? '';
   } catch {
     return responseBody;
   }
 
-  if (!responseText || !responseText.includes('```tpt-edit')) return responseBody;
-
-  const instructions: SilentEditInstruction[] = [];
-  let match: RegExpExecArray | null;
-  TPT_EDIT_RE.lastIndex = 0;
-
-  while ((match = TPT_EDIT_RE.exec(responseText)) !== null) {
-    try {
-      const instruction = JSON.parse(match[1].trim()) as SilentEditInstruction;
-      if (instruction.file && instruction.startLine && instruction.endLine && instruction.newContent !== undefined) {
-        instructions.push(instruction);
-      }
-    } catch { /* invalid JSON block — skip */ }
-  }
-
-  if (instructions.length === 0) return responseBody;
-
-  await applyEdits(instructions);
+  const instructions = extractEditInstructions(responseText);
+  if (instructions.length > 0) proposeEdits(instructions);
   return responseBody;
 }
 
@@ -105,23 +124,25 @@ export async function handleSilentEditStreamResponse(accumulated: string, format
     } catch { /* skip malformed event */ }
   }
 
-  if (!fullText.includes('```tpt-edit')) return;
+  const instructions = extractEditInstructions(fullText);
+  if (instructions.length > 0) proposeEdits(instructions);
+}
 
-  const instructions: SilentEditInstruction[] = [];
-  let match: RegExpExecArray | null;
-  TPT_EDIT_RE.lastIndex = 0;
-  while ((match = TPT_EDIT_RE.exec(fullText)) !== null) {
-    try {
-      const instr = JSON.parse(match[1].trim()) as SilentEditInstruction;
-      if (instr.file && instr.startLine && instr.endLine && instr.newContent !== undefined) {
-        instructions.push(instr);
-      }
-    } catch { /* skip invalid blocks */ }
-  }
-
-  if (instructions.length > 0) {
-    await applyEdits(instructions);
-  }
+// Edits are proposed, not applied: the user confirms first, so text injected through a file or
+// tool output cannot rewrite the workspace silently. Fire-and-forget, so the client response is
+// not held while the user decides.
+export function proposeEdits(instructions: SilentEditInstruction[]): void {
+  const files = [...new Set(instructions.map((i) => i.file))].join(', ');
+  vscode.window.showInformationMessage(
+    `TPT: the model proposed ${instructions.length} edit(s) to ${files}.`,
+    'Apply', 'Discard'
+  ).then((choice) => {
+    if (choice === 'Apply') {
+      return applyEdits(instructions);
+    }
+    log('Silent Edit: proposal discarded');
+    return undefined;
+  }, (err) => log(`Silent Edit: confirmation failed: ${err}`));
 }
 
 async function applyEdits(instructions: SilentEditInstruction[]): Promise<void> {
@@ -132,7 +153,14 @@ async function applyEdits(instructions: SilentEditInstruction[]): Promise<void> 
   const root = folders[0].uri;
 
   for (const instr of instructions) {
-    const fileUri = vscode.Uri.joinPath(root, instr.file);
+    // Model output is untrusted: keep every edit inside the workspace root
+    const targetPath = resolveWorkspaceFile(root.fsPath, instr.file);
+    if (!targetPath) {
+      log(`Silent Edit: rejected path outside workspace: ${instr.file}`);
+      continue;
+    }
+    const fileUri = vscode.Uri.file(targetPath);
+
     let document: vscode.TextDocument;
     try {
       document = await vscode.workspace.openTextDocument(fileUri);
@@ -141,7 +169,12 @@ async function applyEdits(instructions: SilentEditInstruction[]): Promise<void> 
       continue;
     }
 
-    const startLine = Math.max(0, instr.startLine - 1);
+    if (!isValidEditRange(instr.startLine, instr.endLine, document.lineCount)) {
+      log(`Silent Edit: invalid range L${instr.startLine}-${instr.endLine} for ${instr.file} (${document.lineCount} lines)`);
+      continue;
+    }
+
+    const startLine = instr.startLine - 1;
     const endLine = Math.min(document.lineCount - 1, instr.endLine - 1);
     const endChar = document.lineAt(endLine).range.end.character;
     const range = new vscode.Range(startLine, 0, endLine, endChar);
@@ -150,5 +183,8 @@ async function applyEdits(instructions: SilentEditInstruction[]): Promise<void> 
     log(`Silent Edit: ${instr.file} L${instr.startLine}-${instr.endLine}`);
   }
 
-  await vscode.workspace.applyEdit(workspaceEdit);
+  const applied = await vscode.workspace.applyEdit(workspaceEdit);
+  if (!applied) {
+    log('Silent Edit: VS Code rejected the batch (overlapping or stale ranges); no changes applied');
+  }
 }
