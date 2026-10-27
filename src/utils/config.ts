@@ -246,10 +246,17 @@ function isBlockedIpv4(ip: string): boolean {
   );
 }
 
+// Test-only seam: the end-to-end tests point the Anthropic provider at a local stand-in. It is not
+// a setting, so no user configuration can send the Anthropic key anywhere else.
+let anthropicBaseForTests: string | undefined;
+export function setAnthropicBaseUrlForTests(url: string | undefined): void {
+  anthropicBaseForTests = url;
+}
+
 export function resolveUpstreamUrl(config: TptConfig): { baseUrl: string; apiKey: string } {
   switch (config.upstreamProvider) {
     case 'anthropic':
-      return { baseUrl: 'https://api.anthropic.com', apiKey: config.anthropicApiKey };
+      return { baseUrl: anthropicBaseForTests ?? 'https://api.anthropic.com', apiKey: config.anthropicApiKey };
     case 'openai':
       return { baseUrl: 'https://api.openai.com/v1', apiKey: config.openaiApiKey };
     case 'deepseek':
