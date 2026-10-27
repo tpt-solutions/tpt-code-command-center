@@ -1,0 +1,5 @@
+[
+  "(?i)internal[_-]?api[_-]?token\\s*[:=]\\s*\\S+",
+  "acme_[a-z]+_[0-9a-f]{32}",
+  "(?i)db_password\\s*=\\s*[^\\s]+"
+]

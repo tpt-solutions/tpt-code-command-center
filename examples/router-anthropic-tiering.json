@@ -1,0 +1,14 @@
+[
+  {
+    "match": { "maxTokens": 2000 },
+    "model": "claude-haiku-5-5",
+    "provider": "anthropic"
+  },
+  {
+    "match": {
+      "extensions": ["ts", "tsx", "js", "jsx", "py", "go", "rs", "java", "cpp", "cs"]
+    },
+    "model": "claude-sonnet-5-5",
+    "provider": "anthropic"
+  }
+]
