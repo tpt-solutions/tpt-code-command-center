@@ -4,7 +4,7 @@ Copy-paste setups for the tools TPT works with. Start with the one you use.
 
 | I use… | Read |
 |---|---|
-| Claude Code (CLI or VS Code) | [claude-code.md](claude-code.md) |
+| Claude Code (CLI or VS Code) | [claude-code.md](claude-code.md), and [claude-code-settings.json](claude-code-settings.json) for a settings-file setup |
 | Cline (OpenAI-compatible provider) | [cline.md](cline.md) |
 | Roo Code (OpenAI Compatible provider) | [roo-code.md](roo-code.md) |
 | Continue (`config.yaml`) | [continue.md](continue.md) |

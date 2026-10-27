@@ -11,6 +11,16 @@ New terminals opened in a folder with TPT running already have these set:
 
 Open a new terminal and run `claude`. Terminals that were open before TPT started don't have the variables. Open a new one.
 
+## Option 3: Claude Code settings file
+
+Put the variables in `~/.claude/settings.json` under `env`. Claude Code applies them to every session, including ones started outside a TPT workspace. Start from [claude-code-settings.json](claude-code-settings.json) and replace the token.
+
+Use the **user** settings file, not a project file. Project and local settings are read under extra rules, and a project file that holds the token could be committed to git. Because this file is global, Claude Code will send requests to TPT even when TPT isn't running, and they will fail with a connection error. Remove the `env` block to go back to direct connections.
+
+The port is fixed at 7331 in this file. If TPT chose another port, the Output Channel shows the one in use.
+
+Claude Code needs **v2.1.227 or later** for `ANTHROPIC_CUSTOM_HEADERS`. Restart Claude Code after editing the file.
+
 ## Option 2: copy and paste
 
 Run **TPT: Copy Claude Code Setup Snippet** from the command palette. It copies both PowerShell and bash versions with the current port and token. Paste into a terminal, then run `claude`.
