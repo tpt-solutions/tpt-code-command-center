@@ -14,6 +14,7 @@ import { AnthropicRequest, OpenAIRequest, ProxyRequest } from './types';
 import { countTokens, getTodayCostUsd, getThisMonthCostUsd } from '../ledger/ledger';
 import { getCostUsd, initPricing } from '../ledger/pricing';
 import { captureRateLimitHeaders, recordActivity } from '../modules/quotaTracker';
+import { readUpstreamUsage } from '../ledger/usage';
 import { buildUpstreamPath, isAllowedPath, pathOnly, tokenMatches } from './requestPaths';
 
 const PREFERRED_PORT = 7331;
@@ -490,13 +491,16 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
           req.url ?? '/', req.method ?? 'POST',
           req.headers, outBody, format, provider, res, extraHeaders
         );
-        const tokensOut = estimateStreamingTokensOut(accumulated, format);
+        // Prefer the provider's own counts; the local estimates are only a fallback
+        const usage = readUpstreamUsage(accumulated, format, true);
+        const billedIn = usage.inputTokens ?? tokensIn;
+        const tokensOut = usage.outputTokens ?? estimateStreamingTokensOut(accumulated, format);
         const model = (pipelineResult.body as AnthropicRequest).model ?? 'unknown';
         await recordRequest({
           model,
-          tokensIn,
+          tokensIn: billedIn,
           tokensOut,
-          costUsd: status === 200 ? getCostUsd(model, tokensIn, tokensOut) : 0,
+          costUsd: status === 200 ? getCostUsd(model, billedIn, tokensOut) : 0,
           moduleActions: pipelineResult.moduleActions,
           cacheHit: false,
         });
@@ -550,12 +554,15 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       finalBody = await handleSilentEditResponse(forwarded.body);
     }
 
-    const tokensOut = estimateOutputTokens(forwarded.body);
+    // Prefer the provider's own counts; the local estimates are only a fallback
+    const usage = readUpstreamUsage(forwarded.body, format, false);
+    const billedIn = usage.inputTokens ?? tokensIn;
+    const tokensOut = usage.outputTokens ?? estimateOutputTokens(forwarded.body);
     await recordRequest({
       model: (pipelineResult.body as AnthropicRequest).model ?? 'unknown',
-      tokensIn,
+      tokensIn: billedIn,
       tokensOut,
-      costUsd: getCostUsd((pipelineResult.body as AnthropicRequest).model ?? '', tokensIn, tokensOut),
+      costUsd: getCostUsd((pipelineResult.body as AnthropicRequest).model ?? '', billedIn, tokensOut),
       moduleActions: pipelineResult.moduleActions,
       cacheHit: false,
     });
