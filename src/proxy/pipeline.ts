@@ -21,6 +21,22 @@ export interface PipelineResult {
   cacheKey?: { messages: Message[]; scope: Record<string, unknown> };
 }
 
+// The query object owns the skeleton cache, so it is reused across requests while the Weave
+// settings and workspace roots stay the same. Building one per request threw the cache away.
+let weaveMemo: { key: string; query: ReturnType<typeof createWeaveQuery> } | undefined;
+
+function sharedWeaveQuery(config: ReturnType<typeof getConfig>): ReturnType<typeof createWeaveQuery> {
+  const roots = workspaceRoots();
+  const key = JSON.stringify({ cliPath: config.weave.cliPath, level: config.weave.level, roots });
+  if (weaveMemo?.key !== key) {
+    weaveMemo = {
+      key,
+      query: createWeaveQuery({ cliPath: config.weave.cliPath, roots, level: config.weave.level }),
+    };
+  }
+  return weaveMemo.query;
+}
+
 export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
   const config = getConfig();
   const actions: string[] = [];
@@ -70,13 +86,7 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
   //    When tpt-weave is enabled and the workspace has an index, Rust files
   //    get their skeleton from the shared index instead (spec.md §32).
   if (config.smartContext.enabled && 'messages' in body && Array.isArray(body.messages)) {
-    const weave = config.weave.enabled
-      ? createWeaveQuery({
-          cliPath: config.weave.cliPath,
-          roots: workspaceRoots(),
-          level: config.weave.level,
-        })
-      : undefined;
+    const weave = config.weave.enabled ? sharedWeaveQuery(config) : undefined;
     const result = await runSmartContext(body.messages, config.smartContext.maxFileSize, weave);
     if (result.weaveReplaced > 0) {
       actions.push(`weave:skeleton=${result.weaveReplaced}`);

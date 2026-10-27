@@ -161,7 +161,15 @@ export function createWeaveQuery(opts: {
     async skeleton(relPath: string, rawBytes?: number): Promise<string | undefined> {
       const target = resolveTarget(relPath);
       if (!target) return undefined;
-      const key = `${target.root}|${target.rel}`;
+      // Key on mtime and size too: an edited file must not keep serving its old skeleton
+      let stamp: string;
+      try {
+        const st = fs.statSync(path.join(target.root, target.rel));
+        stamp = `${st.mtimeMs}:${st.size}`;
+      } catch {
+        return undefined;
+      }
+      const key = `${target.root}|${target.rel}|${stamp}`;
       const cached = skeletonCache.get(key);
       if (cached !== undefined) {
         sessionStats.replacements++;
