@@ -147,6 +147,15 @@ export interface WeaveSkeletonSource {
 interface ToolCallInfo {
   name?: string;
   path?: string;
+  // A read of a line range, not the whole file. The model asked for those lines, so they stay intact.
+  ranged?: boolean;
+}
+
+const RANGE_KEYS = ['offset', 'limit', 'start_line', 'end_line', 'startLine', 'endLine', 'line_start', 'line_end', 'view_range'];
+
+function isRangedRead(input: unknown): boolean {
+  const i = input as Record<string, unknown> | undefined;
+  return !!i && RANGE_KEYS.some((k) => i[k] !== undefined);
 }
 
 // Only results of file-reading tools are outlined. Bash output, search hits, test failures and
@@ -172,7 +181,7 @@ function indexToolCalls(messages: Message[]): Map<string, ToolCallInfo> {
       for (const block of msg.content as ContentBlock[]) {
         const b = block as unknown as Record<string, unknown>;
         if (b.type === 'tool_use' && typeof b.id === 'string') {
-          index.set(b.id, { name: typeof b.name === 'string' ? b.name : undefined, path: pathFromInput(b.input) });
+          index.set(b.id, { name: typeof b.name === 'string' ? b.name : undefined, path: pathFromInput(b.input), ranged: isRangedRead(b.input) });
         }
       }
     }
@@ -184,7 +193,7 @@ function indexToolCalls(messages: Message[]): Map<string, ToolCallInfo> {
         if (typeof call.id !== 'string') continue;
         let input: unknown;
         try { input = JSON.parse(String(fn?.arguments ?? '{}')); } catch { input = undefined; }
-        index.set(call.id, { name: typeof fn?.name === 'string' ? fn.name : undefined, path: pathFromInput(input) });
+        index.set(call.id, { name: typeof fn?.name === 'string' ? fn.name : undefined, path: pathFromInput(input), ranged: isRangedRead(input) });
       }
     }
   }
@@ -228,7 +237,7 @@ export async function runSmartContext(
     if (Buffer.byteLength(content) <= maxFileSize) return undefined;
 
     const call = typeof toolUseId === 'string' ? toolCalls.get(toolUseId) : undefined;
-    if (!call || !call.name || !READ_TOOL_RE.test(call.name)) return undefined;
+    if (!call || !call.name || !READ_TOOL_RE.test(call.name) || call.ranged) return undefined;
 
     const toolPath = call.path;
 
