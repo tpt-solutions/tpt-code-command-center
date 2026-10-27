@@ -159,7 +159,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [x] Link `claude-compare.md` from README (flagged as estimates). [ ] Replace the estimates with measured numbers
 - [x] Surprising defaults: README now says Router/Silent Edit are off, that routing to another provider needs its key, and where Forge auto-update and the OpenRouter pricing fetch make network calls
 - [x] Dashboard setup guide stays until the first real upstream answer (persisted as `tpt.connected`); the Output Channel no longer opens on every activation
-- [x] CI: `.github/workflows/ci.yml` runs lint, compile and tests on Ubuntu, Windows and macOS (not yet run on GitHub). [x] Issue and PR templates (bug report asks for `TPT: Inspect Last Request` output). [ ] Publish workflow
+- [x] CI: `.github/workflows/ci.yml` runs lint, compile and tests on Ubuntu, Windows and macOS (not yet run on GitHub). [x] Bug report issue template (asks for `TPT: Inspect Last Request` output). No PR template: contributions are issues only. [ ] Publish workflow
 - [x] ESLint config added (`.eslintrc.json`); `npm run lint` passes. `test` lists all test files explicitly (a glob would need Node 21+)
 - [x] `package.json` repository, bugs and homepage point at `tpt-solutions/tpt-code-command-center`. `.vscodeignore` excludes `CLAUDE.md` and `claude-compare.md` (check the `.vsix` contents once packaged)
 - [ ] `package.json`: real `publisher` (needs a VS Code Marketplace publisher account, so it stays with you). [x] `license` is `(MIT OR Apache-2.0)`, matching the LICENSE-MIT and LICENSE-APACHE files. [ ] `galleryBanner` (optional)

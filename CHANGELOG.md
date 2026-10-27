@@ -42,7 +42,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **OpenAI-format clients can use the Anthropic provider.** Chat requests are converted to the Anthropic messages format, and the answers (including streamed ones) are converted back to OpenAI chat. This applies whenever the provider is `anthropic`, with or without a router rule. The other direction (Anthropic-format client to an OpenAI-compatible provider) still needs a router rule, since some providers in that group speak the Anthropic format too.
 - `TPT: Show Memory Weaver Summaries` opens `.tpt/memory.json`.
 - Forge contribution guide and schema reference (`forge-registry/CONTRIBUTING.md`).
-- Issue and pull request templates under `.github/`.
+- Bug report issue template under `.github/`.
 - README: Troubleshooting and FAQ sections, the commands and settings missing from the reference, and a note on Forge's network calls.
 
 ---
