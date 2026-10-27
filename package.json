@@ -444,7 +444,7 @@
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
     "pretest": "npm run compile",
-    "test": "node --test out/test/vault.test.js out/test/vaultExtended.test.js out/test/hash.test.js out/test/router.test.js out/test/routerRules.test.js out/test/promptCache.test.js out/test/weave.test.js out/test/requestPaths.test.js out/test/editSafety.test.js out/test/config.test.js out/test/memoryWeaver.test.js out/test/tokenShield.test.js out/test/ledger.test.js out/test/silentEditParse.test.js out/test/promptCacheLimits.test.js out/test/presets.test.js out/test/integration/proxy.integration.test.js",
+    "test": "node --test out/test/vault.test.js out/test/vaultExtended.test.js out/test/hash.test.js out/test/router.test.js out/test/routerRules.test.js out/test/promptCache.test.js out/test/weave.test.js out/test/requestPaths.test.js out/test/editSafety.test.js out/test/config.test.js out/test/memoryWeaver.test.js out/test/tokenShield.test.js out/test/ledger.test.js out/test/silentEditParse.test.js out/test/promptCacheLimits.test.js out/test/presets.test.js out/test/integration/proxy.integration.test.js out/test/integration/proxy.server.integration.test.js",
     "download-wasm": "node scripts/download-wasm.js"
   },
   "devDependencies": {
