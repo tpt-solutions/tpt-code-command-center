@@ -30,6 +30,14 @@ export function buildUpstreamPath(basePathname: string, requestUrl: string): str
   return '/' + [...baseSegs, ...reqSegs].join('/') + query;
 }
 
+// The key a client sends as "Authorization: Bearer <key>" (Roo Code, Continue, Cline and most
+// OpenAI-compatible clients). Returns undefined for other schemes and for repeated headers.
+export function bearerToken(authorization: string | string[] | undefined): string | undefined {
+  if (typeof authorization !== 'string') return undefined;
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
+  return match ? match[1] : undefined;
+}
+
 // Constant-time comparison of the presented session token against the expected one.
 // A repeated header arrives as an array and is rejected outright.
 export function tokenMatches(presented: string | string[] | undefined, expected: string | undefined): boolean {

@@ -15,7 +15,7 @@ import { countTokens, getTodayCostUsd, getThisMonthCostUsd } from '../ledger/led
 import { getCostUsd, initPricing } from '../ledger/pricing';
 import { captureRateLimitHeaders, recordActivity } from '../modules/quotaTracker';
 import { readUpstreamUsage } from '../ledger/usage';
-import { buildUpstreamPath, isAllowedPath, pathOnly, tokenMatches } from './requestPaths';
+import { bearerToken, buildUpstreamPath, isAllowedPath, pathOnly, tokenMatches } from './requestPaths';
 
 const PREFERRED_PORT = 7331;
 const MAX_PORT_ATTEMPTS = 10;
@@ -324,9 +324,16 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
     const config = getConfig();
 
     // Security: require session token on all requests
-    if (!tokenMatches(req.headers['x-tpt-token'], sessionToken)) {
+    // The token may arrive in X-TPT-Token, or in the key field clients already have:
+    // Authorization: Bearer (Roo Code, Continue, Cline) or x-api-key (Claude Code).
+    // The provider key is still added by the proxy, so these headers carry no real secret.
+    const authorized = tokenMatches(req.headers['x-tpt-token'], sessionToken)
+      || tokenMatches(bearerToken(req.headers.authorization), sessionToken)
+      || tokenMatches(req.headers['x-api-key'], sessionToken);
+    if (!authorized) {
       sendErrorJson(res, 401,
-        'Unauthorized: missing or invalid X-TPT-Token header. ' +
+        'Unauthorized: missing or invalid session token. Send it as the X-TPT-Token header, ' +
+        'or as the API key in the client (Authorization: Bearer or x-api-key). ' +
         'Run "TPT: Copy Session Token" to copy it. For Claude Code, set ' +
         'ANTHROPIC_CUSTOM_HEADERS="X-TPT-Token: <token>" (done automatically in new terminals).');
       return;

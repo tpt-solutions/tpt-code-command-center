@@ -219,6 +219,52 @@ test('auth: a wrong session token is refused', async () => {
   assert.equal(seen.length, 0);
 });
 
+// Sends one request with the given headers, for clients that send the token as their API key
+function callWithHeaders(headers: Record<string, string>): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(getProxyUrl()!);
+    const body = chatBody('m');
+    const req = http.request(
+      {
+        hostname: url.hostname,
+        port: Number(url.port),
+        path: '/v1/chat/completions',
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json', 'content-length': Buffer.byteLength(body).toString() },
+      },
+      (res) => {
+        res.resume();
+        res.on('end', () => resolve(res.statusCode ?? 0));
+      }
+    );
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+test('auth: the session token works as the Bearer API key that Roo Code and Continue send', async () => {
+  seen.length = 0;
+  const status = await callWithHeaders({ authorization: `Bearer ${getSessionToken()}` });
+  assert.equal(status, 200);
+  assert.equal(seen.length, 1);
+  // The client's key is never forwarded: the upstream sees no authorization header from it
+  assert.equal(seen[0].authorization, undefined);
+});
+
+test('auth: the session token works as x-api-key, which Claude Code sends', async () => {
+  seen.length = 0;
+  const status = await callWithHeaders({ 'x-api-key': getSessionToken()! });
+  assert.equal(status, 200);
+});
+
+test('auth: a provider key that is not the session token is refused', async () => {
+  seen.length = 0;
+  const status = await callWithHeaders({ authorization: 'Bearer sk-some-real-provider-key' });
+  assert.equal(status, 401);
+  assert.equal(seen.length, 0);
+});
+
 test('allowlist: a path outside the proxied endpoints returns 404 and never reaches the upstream', async () => {
   seen.length = 0;
 

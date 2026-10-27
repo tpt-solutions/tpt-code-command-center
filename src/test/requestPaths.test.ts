@@ -1,6 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildUpstreamPath, isAllowedPath, tokenMatches } from '../proxy/requestPaths';
+import { bearerToken, buildUpstreamPath, isAllowedPath, tokenMatches } from '../proxy/requestPaths';
+
+// ── bearerToken ───────────────────────────────────────────────────────────────
+
+test('bearerToken: reads the key from an Authorization Bearer header', () => {
+  assert.equal(bearerToken('Bearer abc123'), 'abc123');
+  assert.equal(bearerToken('bearer abc123'), 'abc123');
+});
+
+test('bearerToken: other schemes, empty values and repeated headers give nothing', () => {
+  assert.equal(bearerToken('Basic dXNlcjpwYXNz'), undefined);
+  assert.equal(bearerToken('Bearer '), undefined);
+  assert.equal(bearerToken(undefined), undefined);
+  assert.equal(bearerToken(['Bearer a', 'Bearer b']), undefined);
+});
 
 // ── buildUpstreamPath ─────────────────────────────────────────────────────────
 
