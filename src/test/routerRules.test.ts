@@ -30,10 +30,16 @@ test('runRouter: a rule with no criteria is skipped instead of catching every re
   assert.equal(runRouter({ messages: shortChat }, rules, 'openai'), undefined);
 });
 
-test('runRouter: a rule whose provider speaks the other API format is skipped', () => {
-  // Anthropic-format request, OpenAI-compatible provider: the body is not translated, so no route
+test('runRouter: an Anthropic-format request can be routed to an OpenAI-compatible provider (translated)', () => {
   const rules = [{ match: { maxTokens: 2000 }, model: 'gpt-4o-mini', provider: 'openrouter' }];
-  assert.equal(runRouter({ messages: shortChat }, rules, 'anthropic'), undefined);
+  const result = runRouter({ messages: shortChat }, rules, 'anthropic');
+  assert.ok(result);
+  assert.equal(result.provider, 'openrouter');
+});
+
+test('runRouter: an OpenAI-format request is not routed to the Anthropic provider (no translation that way)', () => {
+  const rules = [{ match: { maxTokens: 2000 }, model: 'claude-haiku-5-5', provider: 'anthropic' }];
+  assert.equal(runRouter({ messages: shortChat }, rules, 'openai'), undefined);
 });
 
 test('runRouter: an anthropic-provider rule applies to anthropic-format requests', () => {

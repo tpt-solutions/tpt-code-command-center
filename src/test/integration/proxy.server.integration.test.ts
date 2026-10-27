@@ -265,6 +265,76 @@ test('auth: a provider key that is not the session token is refused', async () =
   assert.equal(seen.length, 0);
 });
 
+test('translation: an Anthropic request routed to an OpenAI-compatible provider reaches it as OpenAI chat, and the answer comes back as an Anthropic message', async () => {
+  setRouter([{ match: { maxTokens: 2000 }, model: 'routed-model', provider: 'local' }]);
+  seen.length = 0;
+  const body = JSON.stringify({
+    model: 'claude-sonnet-5-5',
+    max_tokens: 100,
+    system: 'be brief',
+    messages: [{ role: 'user', content: 'hello' }],
+  });
+
+  const res = await callProxy('POST', '/v1/messages', body, getSessionToken());
+
+  assert.equal(res.status, 200);
+  // Upstream: OpenAI chat, routed model, system prompt as the first message
+  assert.equal(seen[0].path, '/v1/chat/completions');
+  const sent = JSON.parse(seen[0].body);
+  assert.equal(sent.model, 'routed-model');
+  assert.deepEqual(sent.messages[0], { role: 'system', content: 'be brief' });
+  // Client: an Anthropic message
+  const answer = JSON.parse(res.body);
+  assert.equal(answer.type, 'message');
+  assert.equal(answer.content[0].type, 'text');
+  assert.equal(answer.content[0].text, 'ok');
+  setRouter(undefined);
+});
+
+test('translation: a streamed Anthropic request gets Anthropic stream events as the answer arrives', async () => {
+  setRouter([{ match: { maxTokens: 2000 }, model: 'routed-model', provider: 'local' }]);
+  const url = new URL(getProxyUrl()!);
+  const body = JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 50, stream: true, messages: [{ role: 'user', content: 'go' }] });
+
+  const received = await new Promise<string>((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: url.hostname,
+        port: Number(url.port),
+        path: '/v1/messages',
+        method: 'POST',
+        headers: {
+          'x-tpt-token': getSessionToken()!,
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(body).toString(),
+        },
+      },
+      (res) => {
+        let text = '';
+        res.on('data', (chunk: Buffer) => {
+          text += chunk.toString('utf8');
+          // The mock upstream streams forever: stop once the first text delta arrived
+          if (text.includes('text_delta')) {
+            req.destroy();
+            resolve(text);
+          }
+        });
+        res.on('error', () => { /* the destroy below closes the socket */ });
+      }
+    );
+    req.on('error', (e) => {
+      if (!String(e).includes('socket hang up') && !String(e).includes('ECONNRESET')) reject(e);
+    });
+    req.write(body);
+    req.end();
+  });
+
+  assert.ok(received.includes('event: message_start'));
+  assert.ok(received.includes('event: content_block_start'));
+  assert.ok(received.includes('"text_delta"'));
+  setRouter(undefined);
+});
+
 test('allowlist: a path outside the proxied endpoints returns 404 and never reaches the upstream', async () => {
   seen.length = 0;
 

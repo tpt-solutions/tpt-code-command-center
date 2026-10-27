@@ -6,7 +6,8 @@ import { runSmartContext } from '../modules/smartContext';
 import { createWeaveQuery } from '../modules/weave';
 import { runTokenShield, buildCacheScope } from '../modules/tokenShield';
 import { runMemoryWeaver } from '../modules/memoryWeaver';
-import { runRouter } from '../modules/router';
+import { providerFormat, runRouter } from '../modules/router';
+import { anthropicRequestToOpenAI } from '../modules/translate';
 import { runSilentEditInjection } from '../modules/silentEdit';
 import { runMistralCacheKey, runPromptCache } from '../modules/promptCache';
 import { storeInspectSnapshot } from '../utils/inspectStore';
@@ -19,6 +20,8 @@ export interface PipelineResult {
   // The request as the client sent it (after Vault), which is what Token Shield keys on.
   // The store must use this same input, or lookups and stores never line up.
   cacheKey?: { messages: Message[]; scope: Record<string, unknown> };
+  // The body was converted from Anthropic to OpenAI format; the response must be converted back
+  translated?: boolean;
 }
 
 // The query object owns the skeleton cache, so it is reused across requests while the Weave
@@ -128,9 +131,17 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
     }
   }
 
-  // 8. Mistral has no automatic caching — set a stable prompt_cache_key instead. Only for
+  // 8. Translation: an Anthropic-format request routed to an OpenAI-compatible provider is
+  //    converted to OpenAI chat here. The server converts the answer back.
+  const translated = req.format === 'anthropic' && !!overrideUpstream && providerFormat(effectiveProvider) === 'openai';
+  if (translated) {
+    body = anthropicRequestToOpenAI(body as Record<string, unknown>) as AnthropicRequest | OpenAIRequest;
+    actions.push('translate:anthropic->openai');
+  }
+
+  // 9. Mistral has no automatic caching — set a stable prompt_cache_key instead. Only for
   //    requests that really go to Mistral: other providers may reject the unknown field.
-  if (effectiveProvider === 'mistral' && req.format === 'openai') {
+  if (effectiveProvider === 'mistral' && (req.format === 'openai' || translated)) {
     const result = runMistralCacheKey(body as OpenAIRequest);
     body = result.body;
     if (result.applied) {
@@ -143,5 +154,5 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
   }
 
   storeInspectSnapshot({ timestamp: Date.now(), format: req.format, originalBody, processedBody: body, moduleActions: [...actions], overrideUpstream, cacheHit: false });
-  return { body, overrideUpstream, moduleActions: actions, cacheKey };
+  return { body, overrideUpstream, moduleActions: actions, cacheKey, translated };
 }

@@ -16,6 +16,8 @@ import { getCostUsd, initPricing } from '../ledger/pricing';
 import { captureRateLimitHeaders, recordActivity } from '../modules/quotaTracker';
 import { readUpstreamUsage } from '../ledger/usage';
 import { markConnected } from '../utils/connection';
+import { OpenAIStreamToAnthropic, anthropicErrorBody, openAIResponseToAnthropic } from '../modules/translate';
+import { StringDecoder } from 'string_decoder';
 import { bearerToken, buildUpstreamPath, isAllowedPath, pathOnly, tokenMatches, upstreamRequestPath } from './requestPaths';
 
 const PREFERRED_PORT = 7331;
@@ -221,7 +223,8 @@ function forwardStreamingRequest(
   _format: 'anthropic' | 'openai',
   upstreamProvider: UpstreamProvider,
   clientRes: http.ServerResponse,
-  extraHeaders: Record<string, string> = {}
+  extraHeaders: Record<string, string> = {},
+  translator?: OpenAIStreamToAnthropic
 ): Promise<{ accumulated: string; status: number }> {
   return new Promise((resolve) => {
     const url = new URL(targetUrl);
@@ -250,7 +253,7 @@ function forwardStreamingRequest(
           if (!clientRes.headersSent) {
             clientRes.writeHead(status, { 'content-type': 'application/json' });
           }
-          clientRes.end(responseBody);
+          clientRes.end(translator ? anthropicErrorBody(responseBody) : responseBody);
           resolve({ accumulated: responseBody, status });
         });
         return;
@@ -264,16 +267,24 @@ function forwardStreamingRequest(
         'x-accel-buffering': 'no',
       });
 
+      // Decode across chunk boundaries, so a multi-byte character split by the network survives
+      const decoder = new StringDecoder('utf8');
       upstreamRes.on('data', (chunk: Buffer) => {
         chunks.push(chunk);
+        // A translated stream goes out as the client's format; the raw chunks stay for accounting
+        const out = translator ? translator.push(decoder.write(chunk)) : chunk;
         // Respect backpressure: a slow client pauses the upstream instead of growing memory
-        if (!clientRes.write(chunk)) {
+        if (!clientRes.write(out)) {
           upstreamRes.pause();
           clientRes.once('drain', () => upstreamRes.resume());
         }
       });
 
       upstreamRes.on('end', () => {
+        if (translator) {
+          const tail = translator.push(decoder.end()) + translator.end();
+          if (tail) clientRes.write(tail);
+        }
         clientRes.end();
         resolve({ accumulated: Buffer.concat(chunks).toString('utf8'), status });
       });
@@ -483,6 +494,13 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       return;
     }
 
+    // Routed to an OpenAI-compatible provider: only the messages endpoint is translated
+    const translating = pipelineResult.translated === true;
+    if (translating && pathOnly(req.url ?? '/') !== '/v1/messages') {
+      sendErrorJson(res, 404, `TPT: ${pathOnly(req.url ?? '/')} is not translated for OpenAI-compatible providers`);
+      return;
+    }
+
     // Cache hit — return stored response directly
     if (pipelineResult.cachedResponse) {
       const tokensIn = countTokens(parsedBody as AnthropicRequest | OpenAIRequest);
@@ -501,6 +519,9 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
 
     // The router may send this request to a different provider than the global setting
     const provider: UpstreamProvider = pipelineResult.overrideUpstream?.provider ?? config.upstreamProvider;
+    // The format the upstream actually speaks, which is what its usage and stream events use
+    const upstreamFormat: 'anthropic' | 'openai' = translating ? 'openai' : format;
+    const upstreamPath = translating ? '/v1/chat/completions' : upstreamRequestPath(provider, req.url ?? '/');
 
     // Streaming path — pipe SSE chunks directly to the client
     const isStreaming = !!(pipelineResult.body as Record<string, unknown>).stream;
@@ -512,13 +533,14 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       try {
         const { accumulated, status } = await forwardStreamingRequest(
           upstream.baseUrl, upstream.apiKey,
-          upstreamRequestPath(provider, req.url ?? '/'), req.method ?? 'POST',
-          req.headers, outBody, format, provider, res, extraHeaders
+          upstreamPath, req.method ?? 'POST',
+          req.headers, outBody, format, provider, res, extraHeaders,
+          translating ? new OpenAIStreamToAnthropic() : undefined
         );
         // Prefer the provider's own counts; the local estimates are only a fallback
-        const usage = readUpstreamUsage(accumulated, format, true);
+        const usage = readUpstreamUsage(accumulated, upstreamFormat, true);
         const billedIn = usage.inputTokens ?? tokensIn;
-        const tokensOut = usage.outputTokens ?? estimateStreamingTokensOut(accumulated, format);
+        const tokensOut = usage.outputTokens ?? estimateStreamingTokensOut(accumulated, upstreamFormat);
         const model = (pipelineResult.body as AnthropicRequest).model ?? 'unknown';
         await recordRequest({
           model,
@@ -531,7 +553,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
         if (status === 200) {
           markConnected();
           if (config.silentEdit.enabled) {
-            await handleSilentEditStreamResponse(accumulated, format);
+            await handleSilentEditStreamResponse(accumulated, upstreamFormat);
           }
           checkBudget().catch(() => { /* ignore */ });
         }
@@ -552,7 +574,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
     try {
       forwarded = await forwardRequest(
         upstream.baseUrl, upstream.apiKey,
-        upstreamRequestPath(provider, req.url ?? '/'), req.method ?? 'POST',
+        upstreamPath, req.method ?? 'POST',
         req.headers, outBody, format, provider, nonStreamExtraHeaders
       );
     } catch (e) {
@@ -563,26 +585,30 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
 
     if (forwarded.status === 200) markConnected();
 
+    // What the client receives: the upstream answer, converted back when the request was translated
+    const clientBody = translating ? toClientFormat(forwarded.status, forwarded.body) : forwarded.body;
+
     // Store under the same key Token Shield looked up with (the client's request, post-Vault).
-    // Responses that call a tool are tied to this turn and are never reused.
+    // Responses that call a tool are tied to this turn and are never reused. The stored body is
+    // the client's format, so a later cache hit can be returned as it is.
     if (config.tokenShield.enabled && forwarded.status === 200 && pipelineResult.cacheKey &&
         !responseHasToolCall(forwarded.body)) {
       await storeCachedResponse(
         pipelineResult.cacheKey.messages,
-        forwarded.body,
+        clientBody,
         config.tokenShield,
         pipelineResult.cacheKey.scope
       );
     }
 
     // Silent Edit response interception
-    let finalBody = forwarded.body;
+    let finalBody = clientBody;
     if (config.silentEdit.enabled && forwarded.status === 200) {
-      finalBody = await handleSilentEditResponse(forwarded.body);
+      finalBody = await handleSilentEditResponse(clientBody);
     }
 
     // Prefer the provider's own counts; the local estimates are only a fallback
-    const usage = readUpstreamUsage(forwarded.body, format, false);
+    const usage = readUpstreamUsage(forwarded.body, upstreamFormat, false);
     const billedIn = usage.inputTokens ?? tokensIn;
     const tokensOut = usage.outputTokens ?? estimateOutputTokens(forwarded.body);
     await recordRequest({
@@ -726,6 +752,16 @@ async function injectTerminalEnv(port: number): Promise<void> {
     }
   } catch (e) {
     log(`Could not write terminal environment (open a folder to enable it): ${e}`);
+  }
+}
+
+// The upstream's answer in the client's format: Anthropic for an Anthropic-format request
+function toClientFormat(status: number, body: string): string {
+  if (status !== 200) return anthropicErrorBody(body);
+  try {
+    return JSON.stringify(openAIResponseToAnthropic(JSON.parse(body) as Record<string, unknown>));
+  } catch {
+    return anthropicErrorBody(body);
   }
 }
 
