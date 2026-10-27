@@ -175,7 +175,7 @@ export async function getStats(): Promise<LedgerStats> {
 
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
   const daily = database.exec(
-    `SELECT date(ts/1000,'unixepoch') as d, SUM(tokens_in), SUM(tokens_out), SUM(cost_usd), SUM(cache_hit)
+    `SELECT date(ts/1000,'unixepoch','localtime') as d, SUM(tokens_in), SUM(tokens_out), SUM(cost_usd), SUM(cache_hit)
      FROM requests WHERE ts > ? GROUP BY d ORDER BY d`,
     [sevenDaysAgo]
   );
@@ -255,7 +255,7 @@ export async function getMonthlyStats(months = 12): Promise<MonthStat[]> {
   const cutoff = Date.now() - months * 31 * 24 * 60 * 60 * 1000;
   const rows = database.exec(
     `SELECT
-       strftime('%Y-%m', ts/1000, 'unixepoch') as m,
+       strftime('%Y-%m', ts/1000, 'unixepoch', 'localtime') as m,
        SUM(tokens_in), SUM(tokens_out), SUM(cost_usd),
        SUM(cache_hit), COUNT(*),
        -- Averages are over real upstream calls only: cache hits cost 0 and would drag the
