@@ -18,9 +18,12 @@ interface Seen {
   method: string;
   path: string;
   body: string;
+  authorization?: string;
 }
 
 const seen: Seen[] = [];
+// Set when the mock upstream sees its streaming response closed (the proxy went away)
+let upstreamStreamClosed = false;
 let upstream: http.Server;
 let upstreamPort: number;
 
@@ -71,7 +74,21 @@ before(async () => {
     const chunks: Buffer[] = [];
     req.on('data', (c: Buffer) => chunks.push(c));
     req.on('end', () => {
-      seen.push({ method: req.method ?? '', path: req.url ?? '', body: Buffer.concat(chunks).toString('utf8') });
+      const body = Buffer.concat(chunks).toString('utf8');
+      seen.push({ method: req.method ?? '', path: req.url ?? '', body, authorization: req.headers.authorization });
+
+      if (/"stream"\s*:\s*true/.test(body)) {
+        // A stream that keeps going until the proxy closes it
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write('data: {"choices":[{"delta":{"content":"a"}}]}\n\n');
+        const timer = setInterval(() => res.write('data: {"choices":[{"delta":{"content":"b"}}]}\n\n'), 20);
+        res.on('close', () => {
+          clearInterval(timer);
+          upstreamStreamClosed = true;
+        });
+        return;
+      }
+
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }], usage: { completion_tokens: 1 } }));
     });
@@ -118,6 +135,59 @@ test('router: a rule for the other API format is not applied (body is not transl
   assert.equal(res.status, 200);
   assert.equal(JSON.parse(seen[0].body).model, 'client-model');
   setRouter(undefined);
+});
+
+test('router: the auth header follows the routed provider, not the global one', async () => {
+  // Global provider is "local" (no key). The routed "custom" provider has a key.
+  testConfig['customBaseUrl'] = `http://localhost:${upstreamPort}/v1`;
+  testConfig['customApiKey'] = 'routed-secret';
+  setRouter([{ match: { maxTokens: 2000 }, model: 'm2', provider: 'custom' }]);
+  seen.length = 0;
+
+  const res = await callProxy('POST', '/v1/chat/completions', chatBody('m1'), getSessionToken());
+
+  assert.equal(res.status, 200);
+  assert.equal(seen[0].authorization, 'Bearer routed-secret');
+  assert.equal(seen[0].path, '/v1/chat/completions');
+  setRouter(undefined);
+  delete testConfig['customApiKey'];
+});
+
+test('streaming: the client going away stops the upstream stream', async () => {
+  upstreamStreamClosed = false;
+  const url = new URL(getProxyUrl()!);
+  const body = JSON.stringify({ model: 'm', stream: true, messages: [{ role: 'user', content: 'go on' }] });
+
+  await new Promise<void>((resolve) => {
+    const req = http.request(
+      {
+        hostname: url.hostname,
+        port: Number(url.port),
+        path: '/v1/chat/completions',
+        method: 'POST',
+        headers: {
+          'x-tpt-token': getSessionToken()!,
+          'content-type': 'application/json',
+          'content-length': Buffer.byteLength(body).toString(),
+        },
+      },
+      (res) => {
+        // First chunk arrived: the stream is live. Now the client disconnects.
+        res.once('data', () => {
+          req.destroy();
+          resolve();
+        });
+      }
+    );
+    req.on('error', () => { /* destroying the client socket reports an error here; expected */ });
+    req.write(body);
+    req.end();
+  });
+
+  for (let i = 0; i < 100 && !upstreamStreamClosed; i++) {
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  assert.equal(upstreamStreamClosed, true);
 });
 
 test('passthrough: a bodyless GET /v1/models is forwarded with the token and no body', async () => {
