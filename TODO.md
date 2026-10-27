@@ -142,7 +142,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [x] Unknown router provider skipped (no longer falls through to OpenRouter's key)
 - [x] Forge: timeout, status and size checks, https only. Entries may pin a `sha256`; a mismatch refuses the install (`forge.test.ts`). [ ] Registry entries do not carry hashes yet, so the pin is optional and most entries install unverified; remote entries still override built-ins and can fetch arbitrary URLs
 - [x] Session token no longer printed to the Output Channel (copy with `TPT: Copy Session Token`); constant-time comparison; repeated header rejected
-- [ ] Move API keys and session token to `SecretStorage` (currently plaintext in workspace `settings.json`); `.gitignore` check misses patterns and the no-`.gitignore` case; also ignore `.tpt/` (ledger/cache hold prompts)
+- [x] API keys live in SecretStorage and are moved out of `settings.json` on first run; the key settings are marked deprecated (`secrets.test.ts`). The session token was already in global state, not settings. [ ] `.gitignore` check still misses the `.tpt/` folder (ledger and cache hold prompts)
 - [x] Memory Weaver: corrupt `memory.json` no longer throws into the pipeline; the Ollama URL comes from the validated setting; the proxy backend keeps base path prefixes
 
 ## Phase 12 — Adoption & Usability (Pending)
@@ -162,8 +162,8 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [x] CI: `.github/workflows/ci.yml` runs lint, compile and tests on Ubuntu, Windows and macOS (not yet run on GitHub). [ ] Publish workflow; issue/PR templates (ask for `tpt.inspectLast` output)
 - [x] ESLint config added (`.eslintrc.json`); `npm run lint` passes. `test` lists all test files explicitly (a glob would need Node 21+)
 - [x] `package.json` repository, bugs and homepage point at `tpt-solutions/tpt-code-command-center`. `.vscodeignore` excludes `CLAUDE.md` and `claude-compare.md` (check the `.vsix` contents once packaged)
-- [ ] `package.json`: real `publisher`, `license` (the `license` line is still uncommitted, pending the LICENSE change), `galleryBanner`; drop redundant `download-wasm` in `vscode:prepublish` (WASM is tracked)
-- [ ] Cut CHANGELOG `[Unreleased]` into 0.1.1 and bump version (needs a release decision)
+- [ ] `package.json`: real `publisher` (needs a VS Code Marketplace publisher account, so it stays with you). [x] `license` is `(MIT OR Apache-2.0)`, matching the LICENSE-MIT and LICENSE-APACHE files. [ ] `galleryBanner` (optional)
+- [x] CHANGELOG cut into 0.1.1 (2026-10-28) and the version bumped to 0.1.1, following the recommendation
 
 ## Phase 13 — Innovation Ideas (Backlog)
 
@@ -175,7 +175,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [ ] Request replay / A-B compare across models using the ledger
 - [x] Vault preview: `TPT: Test Vault Patterns on Selection` shows the redacted text for the selection or typed input
 - [ ] Anonymous opt-in adoption metrics (currently zero telemetry, so adoption can't be measured)
-- [ ] Cross-format routing — translate request/response between Anthropic Messages and OpenAI chat formats so routes can cross providers
+- [x] Cross-format routing, Anthropic → OpenAI-compatible direction: requests, answers, streamed text and tool calls (`translate.test.ts`, end-to-end in `proxy.server.integration.test.ts`). [ ] The reverse direction (OpenAI-format client to the Anthropic provider) and count_tokens translation are still open
 - [x] Groq and Google Gemini providers (done, see Phase 10)
 
 ## Phase 14 — Test Coverage Gaps (In progress)
