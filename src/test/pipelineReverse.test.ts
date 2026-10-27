@@ -55,3 +55,24 @@ test('reverse pipeline: a bodyless request to the Anthropic provider passes thro
 
   assert.equal(result.translated, false);
 });
+
+test('count_tokens: the pipeline gives it no cache key and runs no summariser, since it only needs a count', async () => {
+  testConfig['upstreamProvider'] = 'openrouter';
+  testConfig['router.enabled'] = false;
+  testConfig['tokenShield.enabled'] = true;
+  testConfig['memoryWeaver.enabled'] = true;
+  testConfig['memoryWeaver.tokenThreshold'] = 10;
+  testConfig['memoryWeaver.fallbackOrder'] = ['extractive'];
+  const long = 'count me '.repeat(200);
+  const result = await runPipeline({
+    method: 'POST',
+    path: '/v1/messages/count_tokens',
+    headers: {},
+    body: { model: 'claude-sonnet-5-5', messages: [{ role: 'user', content: long }, { role: 'assistant', content: 'a' }, { role: 'user', content: 'b' }] },
+    format: 'anthropic' as const,
+    sessionToken: 'test',
+  } as never);
+
+  assert.equal(result.cacheKey, undefined, 'a count is never stored as the answer to a chat request');
+  assert.equal((result.body as { messages: unknown[] }).messages.length, 3, 'the conversation is not summarised for a count');
+});

@@ -185,3 +185,23 @@ test('dry run e2e: the request is sent to the provider byte for byte as the clie
   assert.equal(seen[0].body, sentByClient, 'nothing the modules measured reaches the provider');
   assert.equal(seen[0].path, '/v1/chat/completions');
 });
+
+test('count_tokens e2e: an Anthropic-format client routed to an OpenAI-compatible provider gets a local count, and nothing is sent', async () => {
+  testConfig['router.enabled'] = true;
+  testConfig['router.rules'] = [{ match: { maxTokens: 100000 }, model: 'local-model', provider: 'local' }];
+  seen.length = 0;
+  const body = JSON.stringify({
+    model: 'claude-sonnet-5-5',
+    messages: [{ role: 'user', content: 'how many tokens is this conversation' }],
+  });
+
+  const res = await callProxy('/v1/messages/count_tokens', body);
+
+  testConfig['router.enabled'] = false;
+  delete testConfig['router.rules'];
+  assert.equal(res.status, 200);
+  const counted = JSON.parse(res.body) as { input_tokens: number };
+  assert.equal(typeof counted.input_tokens, 'number');
+  assert.ok(counted.input_tokens > 0);
+  assert.equal(seen.length, 0, 'the count is answered by TPT, not by a provider');
+});

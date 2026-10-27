@@ -534,6 +534,14 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
     const translating = pipelineResult.translated === true;
     const clientMessagesPath = format === 'anthropic' ? '/v1/messages' : '/v1/chat/completions';
     if (translating && pathOnly(req.url ?? '/') !== clientMessagesPath) {
+      // count_tokens has no OpenAI equivalent. Claude Code uses it to size a conversation, so answer
+      // it here with the ledger's estimate instead of a 404 that breaks the client. Nothing is sent upstream.
+      if (format === 'anthropic' && pathOnly(req.url ?? '/') === '/v1/messages/count_tokens') {
+        const inputTokens = countTokens(parsedBody as AnthropicRequest | OpenAIRequest);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ input_tokens: inputTokens }));
+        return;
+      }
       sendErrorJson(res, 404, `TPT: ${pathOnly(req.url ?? '/')} is not translated for this provider`);
       return;
     }

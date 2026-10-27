@@ -78,7 +78,10 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
   // 2. Token Shield: check cache before hitting upstream (skip for streaming — cached responses
   //    are buffered JSON, not SSE, so returning one to a streaming client would break the protocol)
   const isStreaming = !!(body as Record<string, unknown>).stream;
-  const cacheKey = 'messages' in body && Array.isArray(body.messages)
+  // count_tokens shares its messages with a real chat request, so it must never be cached or stored
+  // as the answer to one, and it must not call a summariser. It only needs a count.
+  const countTokensOnly = req.path.split('?')[0] === '/v1/messages/count_tokens';
+  const cacheKey = !countTokensOnly && 'messages' in body && Array.isArray(body.messages)
     ? { messages: body.messages as Message[], scope: buildCacheScope(body as Record<string, unknown>, req.format) }
     : undefined;
   // A dry run never answers from the cache: it measures the request the way it would be sent
@@ -94,7 +97,7 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
 
   // 3. Memory Weaver: summarise if conversation is too long. A dry run uses only the local
   //    extractive backend: the Ollama and proxy backends would call a model, which is traffic.
-  if (config.memoryWeaver.enabled && 'messages' in body && Array.isArray(body.messages)) {
+  if (config.memoryWeaver.enabled && !countTokensOnly && 'messages' in body && Array.isArray(body.messages)) {
     const weaverOptions = config.dryRun ? { ...config.memoryWeaver, fallbackOrder: ['extractive'] } : config.memoryWeaver;
     const result = await runMemoryWeaver(body.messages, weaverOptions);
     if (result.summarised) {
@@ -106,7 +109,7 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
 
   // 3b. Cross-session recall (opt-in): on the first turn of a conversation, add the summaries from
   //     earlier sessions that share words with the request. They go in the system prompt.
-  if (config.memoryWeaver.recallEnabled && 'messages' in body && Array.isArray(body.messages) &&
+  if (config.memoryWeaver.recallEnabled && !countTokensOnly && 'messages' in body && Array.isArray(body.messages) &&
       isFirstTurn(body.messages as Message[])) {
     const recalled = selectRecall(readMemorySummaries(), lastUserText(body.messages as Message[]));
     if (recalled.length > 0) {

@@ -9,6 +9,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+- **`count_tokens` is never cached or summarised.** It shares its messages with a real chat request, so its count could be stored as that request's cached answer, and a later chat request would have got `{input_tokens}` back. Memory Weaver could also call a summariser for a count. Now it gets no cache key and no summary. An Anthropic-format client routed to an OpenAI-compatible provider gets the count locally, instead of a 404.
+
 ### Changed
 - **Forge installs take effect.** Installed entries were written to `.tpt/forge/` but never read. Vault patterns now join the Vault, router rules apply when `tpt.router.rules` is empty, and a system prompt replaces the Silent Edit schema. Installed files use a new envelope format (`name`, `type`, `version`, `content`); files written by 0.1.1 are ignored, so reinstall them.
 - **`tpt.forge.autoUpdate`** re-installs the workspace's Forge entries from the registry on activation, in the background.
