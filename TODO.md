@@ -153,7 +153,7 @@ Source: platform review (proxy core, modules, adoption). Items marked (verified)
 - [ ] Verify `tpt.configureCline` writes keys Cline actually reads; set the model name; reconcile `${url}` vs `${url}/v1` between docs and code
 - [ ] Refresh stale terminal env on port change; warn when existing terminals hold an old URL (env is now rewritten on every activation after bind; already-open terminals keep the old value)
 - [x] **Presets** — `TPT: Apply Settings Preset` offers Frugal, Privacy-first, Local only (Ollama) and Anthropic tiering; writes to workspace settings, or user settings when no folder is open. A test checks each key is a declared setting
-- [x] `examples/`: Claude Code, Cline and local-model guides; router and Vault config samples; smoke-test scripts for bash and PowerShell. [x] Roo Code and Continue guides. [ ] A sample ledger CSV and a `.claude/settings.json` recipe
+- [x] `examples/`: Claude Code, Cline and local-model guides; router and Vault config samples; smoke-test scripts for bash and PowerShell. [x] Roo Code and Continue guides. [x] Claude Code settings-file recipe (`claude-code-settings.json`, user-level). [ ] A sample ledger CSV
 - [ ] Forge starter pack bundle + contribution template/schema doc
 - [ ] README sync with `package.json`: missing commands (`configureModels`, `inspectLast`, `showPromptDiff`, `exportLedger`, `configureCline`, `runSetupWizard`, `resetSetup`, `exportMonthlySummary`) and settings (`costBudget.*`, `tokenShield.semanticCache.*`, `forge.registryUrl`, memoryWeaver models, per-provider keys); add Troubleshooting (401, port, stale terminal) and FAQ; link `examples/`
 - [ ] Link `claude-compare.md` from README; replace estimates with measured numbers
@@ -197,5 +197,6 @@ Automated: `npm run compile` clean; `npm test` 164/164 passing; `npm run lint` c
 - [x] Weave skeleton freshness (`weaveFreshness.test.ts`), Mistral key gating (`pipeline.test.ts`), cache-aware cost (`pricing.test.ts`), upstream usage parsing (`usage.test.ts`)
 - [x] End-to-end against the real server (`proxy.server.integration.test.ts`, mock upstream): routed model reaches the upstream with a single `/v1` path; a cross-format rule is not applied; bodyless `GET /v1/models` passes through; missing or wrong token gets 401; a path outside the allowlist gets 404 and never reaches the upstream
 - [x] Routed-provider auth header and streaming client disconnect (which stops the upstream stream), both end to end
-- [ ] Still open: `ANTHROPIC_CUSTOM_HEADERS` accepted by a live Claude Code session
+- [x] Claude Code documents `ANTHROPIC_CUSTOM_HEADERS` as `Name: Value` pairs separated by newlines, from v2.1.227, and documents the `env` key in settings files (checked against the official env-vars page)
+- [ ] Still open: a live Claude Code session sends `X-TPT-Token` through `ANTHROPIC_CUSTOM_HEADERS` and gets through the proxy
 - [ ] Manual: macOS/Linux `.vsix` install, `cache_read_input_tokens > 0` on turn 2, first CI run on GitHub
