@@ -6,7 +6,7 @@ import * as vscode from 'vscode';
 import { log } from '../utils/logger';
 import { getConfig } from '../utils/config';
 
-const DEFAULT_REGISTRY_URL = 'https://raw.githubusercontent.com/PhillipC05/tpt-code-command-center/master/forge-registry/index.json';
+const DEFAULT_REGISTRY_URL = 'https://raw.githubusercontent.com/tpt-solutions/tpt-code-command-center/master/forge-registry/index.json';
 
 export interface ForgeEntry {
   name: string;
@@ -24,7 +24,7 @@ export const BUILTIN_FORGE_ENTRIES: ForgeEntry[] = [
     name: 'default-router-rules',
     description: 'Comprehensive TPT Router ruleset — routes short/simple prompts to cheaper models and code, debugging, and security contexts to capable models',
     type: 'router-rule',
-    url: 'https://raw.githubusercontent.com/PhillipC05/tpt-code-command-center/master/forge-registry/configs/default-router-rules.json',
+    url: 'https://raw.githubusercontent.com/tpt-solutions/tpt-code-command-center/master/forge-registry/configs/default-router-rules.json',
     version: '1.0.0',
     localContent: [
       { match: { maxTokens: 1500 }, model: 'openai/gpt-4o-mini', provider: 'openrouter' },
@@ -42,7 +42,7 @@ export const BUILTIN_FORGE_ENTRIES: ForgeEntry[] = [
     name: 'common-vault-patterns',
     description: 'Extended credential patterns for Slack, SendGrid, Twilio, Google Cloud, Azure AD, and generic internal API key formats',
     type: 'vault-pattern',
-    url: 'https://raw.githubusercontent.com/PhillipC05/tpt-code-command-center/master/forge-registry/configs/common-vault-patterns.json',
+    url: 'https://raw.githubusercontent.com/tpt-solutions/tpt-code-command-center/master/forge-registry/configs/common-vault-patterns.json',
     version: '1.0.0',
     localContent: [
       '(?i)(?:azure|az)[_\\-]?(?:tenant|client|subscription)[_\\-]?(?:id|secret|key)\\s*[=:]\\s*[\'"]?[a-zA-Z0-9\\-]{8,}',
@@ -55,7 +55,7 @@ export const BUILTIN_FORGE_ENTRIES: ForgeEntry[] = [
     name: 'silent-edit-system-prompt',
     description: 'System prompt template that instructs LLMs to output file edits using the TPT Silent Edit tpt-edit JSON schema',
     type: 'system-prompt',
-    url: 'https://raw.githubusercontent.com/PhillipC05/tpt-code-command-center/master/forge-registry/configs/silent-edit-system-prompt.json',
+    url: 'https://raw.githubusercontent.com/tpt-solutions/tpt-code-command-center/master/forge-registry/configs/silent-edit-system-prompt.json',
     version: '1.0.0',
     localContent: {
       name: 'TPT Silent Edit Schema',
