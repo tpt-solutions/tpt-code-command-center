@@ -3,23 +3,55 @@ import * as fs from 'fs';
 import * as http from 'http';
 import * as vscode from 'vscode';
 import { Message } from '../proxy/types';
-import { getConfig, resolveUpstreamUrl } from '../utils/config';
+import { getConfig, resolveUpstreamUrl, validateUserSuppliedUrl } from '../utils/config';
 import { log } from '../utils/logger';
+import { buildUpstreamPath } from '../proxy/requestPaths';
 
-function estimateTokens(messages: Message[]): number {
+// Ollama endpoint from the same setting Token Shield's embeddings use. Validated like any other
+// user-supplied URL; an invalid value disables the Ollama backend instead of sending data elsewhere.
+function ollamaTarget(): URL | undefined {
+  const raw = getConfig().tokenShield.semanticCache.ollamaBaseUrl || 'http://localhost:11434';
+  try {
+    validateUserSuppliedUrl(raw);
+    return new URL(raw);
+  } catch {
+    return undefined;
+  }
+}
+
+// Counts text, tool inputs and tool results: all of them are sent upstream as context
+function messageChars(msg: Message): number {
+  if (typeof msg.content === 'string') return msg.content.length;
+  if (!Array.isArray(msg.content)) return 0;
   let chars = 0;
-  for (const msg of messages) {
-    if (typeof msg.content === 'string') {
-      chars += msg.content.length;
-    } else if (Array.isArray(msg.content)) {
-      for (const block of msg.content) {
-        if (typeof block === 'object' && block !== null && 'text' in block) {
-          chars += String((block as Record<string, unknown>).text ?? '').length;
-        }
-      }
+  for (const block of msg.content) {
+    const b = block as unknown as Record<string, unknown>;
+    if (typeof b.text === 'string') chars += b.text.length;
+    else if (b.type === 'tool_use') chars += JSON.stringify(b.input ?? {}).length;
+    else if (b.type === 'tool_result') {
+      chars += typeof b.content === 'string' ? b.content.length : JSON.stringify(b.content ?? '').length;
     }
   }
-  return Math.ceil(chars / 4);
+  return chars;
+}
+
+function estimateTokens(messages: Message[]): number {
+  return Math.ceil(messages.reduce((n, m) => n + messageChars(m), 0) / 4);
+}
+
+// A message that carries tool results must stay with the assistant turn that issued them
+function isToolResultMessage(msg: Message): boolean {
+  if (msg.role === 'tool') return true;
+  return Array.isArray(msg.content) &&
+    msg.content.some((b) => (b as unknown as Record<string, unknown>).type === 'tool_result');
+}
+
+// Returns the last `count` messages, moved back as needed so the window never starts
+// with an orphaned tool result (Anthropic and OpenAI reject those with a 400).
+export function pairSafeTail(conversation: Message[], count: number): Message[] {
+  let start = Math.max(0, conversation.length - count);
+  while (start > 0 && isToolResultMessage(conversation[start])) start--;
+  return conversation.slice(start);
 }
 
 function extractiveSummarise(messages: Message[], threshold: number): Message[] {
@@ -27,18 +59,21 @@ function extractiveSummarise(messages: Message[], threshold: number): Message[] 
   const system = messages.filter((m) => m.role === 'system');
   const conversation = messages.filter((m) => m.role !== 'system');
 
-  let kept: Message[] = [];
-  let chars = 0;
   const maxChars = threshold * 4 * 0.6; // keep 60% of threshold
+  let chars = 0;
+  let start = conversation.length;
 
   for (let i = conversation.length - 1; i >= 0; i--) {
-    const msg = conversation[i];
-    const len = typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content).length;
+    const len = messageChars(conversation[i]);
     if (chars + len > maxChars) break;
-    kept.unshift(msg);
     chars += len;
+    start = i;
   }
 
+  // Extend the window backwards if it would begin with an orphaned tool result
+  while (start > 0 && start < conversation.length && isToolResultMessage(conversation[start])) start--;
+
+  let kept = conversation.slice(start);
   if (kept.length < conversation.length) {
     const summary: Message = {
       role: 'user',
@@ -56,8 +91,13 @@ async function summariseViaOllama(messages: Message[], ollamaModel: string): Pro
     const prompt = `Summarise the following conversation history concisely, preserving key decisions, code, and context:\n\n${conversation}`;
     const body = JSON.stringify({ model: ollamaModel, prompt, stream: false });
 
+    const target = ollamaTarget();
+    if (!target) {
+      resolve(null);
+      return;
+    }
     const req = http.request(
-      { hostname: 'localhost', port: 11434, path: '/api/generate', method: 'POST',
+      { hostname: target.hostname, port: target.port || 11434, path: buildUpstreamPath(target.pathname, '/api/generate'), method: 'POST',
         headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } },
       (res) => {
         const chunks: Buffer[] = [];
@@ -124,7 +164,7 @@ async function summariseViaProxy(messages: Message[], options: MemoryWeaverOptio
     const proto = url.protocol === 'https:' ? https : http;
     const req = proto.request(
       { hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
-        path: apiPath, method: 'POST', headers },
+        path: buildUpstreamPath(url.pathname, apiPath), method: 'POST', headers },
       (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (c: Buffer) => chunks.push(c));
@@ -150,10 +190,18 @@ function saveMemory(summary: string): void {
   const dir = path.join(folders[0].uri.fsPath, '.tpt');
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   const memPath = path.join(dir, 'memory.json');
-  const existing = fs.existsSync(memPath) ? JSON.parse(fs.readFileSync(memPath, 'utf8')) : { summaries: [] };
+  // A corrupt file must not break the request: start a fresh history instead
+  let existing: { summaries: { ts: number; summary: string }[] } = { summaries: [] };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(memPath, 'utf8'));
+    if (Array.isArray(parsed?.summaries)) existing = parsed;
+  } catch { /* missing or corrupt: keep the empty history */ }
   existing.summaries.push({ ts: Date.now(), summary });
   if (existing.summaries.length > 10) existing.summaries = existing.summaries.slice(-10);
-  fs.writeFileSync(memPath, JSON.stringify(existing, null, 2));
+  // Write to a temp file then rename, so a crash mid-write cannot corrupt the history
+  const tmpPath = `${memPath}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(existing, null, 2));
+  fs.renameSync(tmpPath, memPath);
 }
 
 export interface MemoryWeaverOptions {
@@ -186,7 +234,7 @@ export async function runMemoryWeaver(
       if (summary) {
         saveMemory(summary);
         const system = messages.filter((m) => m.role === 'system');
-        const last = messages.filter((m) => m.role !== 'system').slice(-4);
+        const last = pairSafeTail(messages.filter((m) => m.role !== 'system'), 4);
         const summaryMsg: Message = { role: 'user', content: `[Memory Weaver Summary]\n${summary}` };
         log('Memory Weaver: summarised via Ollama');
         return { messages: [...system, summaryMsg, ...last], summarised: true };
@@ -196,7 +244,7 @@ export async function runMemoryWeaver(
       if (summary) {
         saveMemory(summary);
         const system = messages.filter((m) => m.role === 'system');
-        const last = messages.filter((m) => m.role !== 'system').slice(-4);
+        const last = pairSafeTail(messages.filter((m) => m.role !== 'system'), 4);
         const summaryMsg: Message = { role: 'user', content: `[Memory Weaver Summary]\n${summary}` };
         log('Memory Weaver: summarised via proxy LLM');
         return { messages: [...system, summaryMsg, ...last], summarised: true };
