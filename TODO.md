@@ -58,7 +58,7 @@
 
 ## Phase 7 — Forge Registry (Pending)
 
-- [x] Create the `tpt-forge/registry` GitHub repository with `index.json` and example entries
+- [x] Create the Forge registry (`forge-registry/` in this repository, with `index.json` and example entries). The `tpt-forge/registry` repository named earlier was never created
 - [x] Publish initial community configs:
   - [x] Default router rules set
   - [x] Common Vault patterns (internal company key formats)
