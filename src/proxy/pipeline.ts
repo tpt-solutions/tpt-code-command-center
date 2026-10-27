@@ -1,10 +1,10 @@
-import { getConfig, workspaceRoots } from '../utils/config';
+import { UpstreamProvider, getConfig, workspaceRoots } from '../utils/config';
 import { log } from '../utils/logger';
-import { AnthropicRequest, OpenAIRequest, ProxyRequest } from './types';
+import { AnthropicRequest, Message, OpenAIRequest, ProxyRequest } from './types';
 import { runVault } from '../modules/vault';
 import { runSmartContext } from '../modules/smartContext';
 import { createWeaveQuery } from '../modules/weave';
-import { runTokenShield } from '../modules/tokenShield';
+import { runTokenShield, buildCacheScope } from '../modules/tokenShield';
 import { runMemoryWeaver } from '../modules/memoryWeaver';
 import { runRouter } from '../modules/router';
 import { runSilentEditInjection } from '../modules/silentEdit';
@@ -13,9 +13,12 @@ import { storeInspectSnapshot } from '../utils/inspectStore';
 
 export interface PipelineResult {
   body: AnthropicRequest | OpenAIRequest | Record<string, unknown>;
-  overrideUpstream?: { baseUrl: string; apiKey: string; model?: string };
+  overrideUpstream?: { baseUrl: string; apiKey: string; model?: string; provider: UpstreamProvider };
   cachedResponse?: string;
   moduleActions: string[];
+  // The request as the client sent it (after Vault), which is what Token Shield keys on.
+  // The store must use this same input, or lookups and stores never line up.
+  cacheKey?: { messages: Message[]; scope: Record<string, unknown> };
 }
 
 export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
@@ -41,8 +44,11 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
   // 2. Token Shield: check cache before hitting upstream (skip for streaming — cached responses
   //    are buffered JSON, not SSE, so returning one to a streaming client would break the protocol)
   const isStreaming = !!(body as Record<string, unknown>).stream;
-  if (config.tokenShield.enabled && !isStreaming && 'messages' in body && Array.isArray(body.messages)) {
-    const cached = await runTokenShield(body.messages, config.tokenShield);
+  const cacheKey = 'messages' in body && Array.isArray(body.messages)
+    ? { messages: body.messages as Message[], scope: buildCacheScope(body as Record<string, unknown>, req.format) }
+    : undefined;
+  if (config.tokenShield.enabled && !isStreaming && cacheKey) {
+    const cached = await runTokenShield(cacheKey.messages, config.tokenShield, cacheKey.scope);
     if (cached) {
       actions.push('tokenShield:hit');
       log('Token Shield cache hit — skipping upstream');
@@ -108,9 +114,13 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
   // 6. Router: rewrite model/provider based on heuristics
   let overrideUpstream: PipelineResult['overrideUpstream'];
   if (config.router.enabled) {
-    const routeResult = runRouter(body, config.router.rules);
+    const routeResult = runRouter(body, config.router.rules, req.format);
     if (routeResult) {
       overrideUpstream = routeResult;
+      // Without this the routed provider receives the client's original model name
+      if (routeResult.model) {
+        body = { ...body, model: routeResult.model } as AnthropicRequest | OpenAIRequest;
+      }
       actions.push(`router:${routeResult.model}@${routeResult.baseUrl}`);
     }
   }
@@ -120,5 +130,5 @@ export async function runPipeline(req: ProxyRequest): Promise<PipelineResult> {
   }
 
   storeInspectSnapshot({ timestamp: Date.now(), format: req.format, originalBody, processedBody: body, moduleActions: [...actions], overrideUpstream, cacheHit: false });
-  return { body, overrideUpstream, moduleActions: actions };
+  return { body, overrideUpstream, moduleActions: actions, cacheKey };
 }

@@ -7,16 +7,6 @@ export interface ProxyRequest {
   sessionToken: string;
 }
 
-export interface ProxyResponse {
-  statusCode: number;
-  headers: Record<string, string>;
-  body: string;
-  tokensIn: number;
-  tokensOut: number;
-  cacheHit: boolean;
-  moduleActions: string[];
-}
-
 // Anthropic Messages API shape (simplified)
 export interface AnthropicRequest {
   model: string;

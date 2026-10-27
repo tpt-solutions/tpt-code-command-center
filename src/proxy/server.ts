@@ -1,20 +1,27 @@
 import * as http from 'http';
 import * as net from 'net';
 import * as https from 'https';
+import * as crypto from 'crypto';
 import * as vscode from 'vscode';
-import { getConfig, resolveUpstreamUrl } from '../utils/config';
+import { getConfig, resolveUpstreamUrl, UpstreamProvider } from '../utils/config';
 import { log } from '../utils/logger';
 import { hashString } from '../utils/hash';
 import { runPipeline } from './pipeline';
 import { recordRequest } from '../ledger/ledger';
-import { storeCachedResponse } from '../modules/tokenShield';
+import { storeCachedResponse, responseHasToolCall } from '../modules/tokenShield';
 import { handleSilentEditResponse, handleSilentEditStreamResponse } from '../modules/silentEdit';
 import { AnthropicRequest, OpenAIRequest, ProxyRequest } from './types';
 import { countTokens, getTodayCostUsd, getThisMonthCostUsd } from '../ledger/ledger';
 import { getCostUsd, initPricing } from '../ledger/pricing';
 import { captureRateLimitHeaders, recordActivity } from '../modules/quotaTracker';
+import { buildUpstreamPath, isAllowedPath, pathOnly, tokenMatches } from './requestPaths';
 
 const PREFERRED_PORT = 7331;
+const MAX_PORT_ATTEMPTS = 10;
+// Idle timeouts: a non-streaming response sends nothing until it is complete, so it gets a
+// longer window than a stream, where a gap between chunks means the upstream has stalled.
+const NON_STREAM_IDLE_MS = 10 * 60 * 1000;
+const STREAM_IDLE_MS = 2 * 60 * 1000;
 
 // Only forward a safe subset of upstream response headers to avoid header injection
 // or leaking internal provider headers (set-cookie, x-internal-*, etc.)
@@ -41,7 +48,7 @@ function filterResponseHeaders(headers: http.IncomingHttpHeaders): Record<string
 // xAI recommends a stable x-grok-conv-id header so repeated requests in the same
 // conversation route to the same server, maximizing their automatic cache hit rate.
 // Derived from the first non-system message so it stays stable across turns.
-function grokConversationHeaders(upstreamProvider: string, body: Record<string, unknown>): Record<string, string> {
+function grokConversationHeaders(upstreamProvider: UpstreamProvider, body: Record<string, unknown>): Record<string, string> {
   if (upstreamProvider !== 'grok') return {};
   const messages = body.messages;
   if (!Array.isArray(messages) || messages.length === 0) return {};
@@ -56,9 +63,12 @@ let activePort: number | undefined;
 let sessionToken: string | undefined;
 let serverState: 'starting' | 'running' | 'error' = 'starting';
 let serverError: string | undefined;
+let pricingTimer: NodeJS.Timeout | undefined;
 
+// 127.0.0.1 rather than "localhost": Node 17+ resolves localhost to ::1 first, and the
+// server only listens on IPv4, which made clients hang on connect.
 export function getProxyUrl(): string | undefined {
-  return activePort ? `http://localhost:${activePort}` : undefined;
+  return activePort ? `http://127.0.0.1:${activePort}` : undefined;
 }
 
 export function getSessionToken(): string | undefined {
@@ -70,14 +80,20 @@ export function getServerState(): { state: typeof serverState; error?: string } 
 }
 
 async function findFreePort(start: number): Promise<number> {
+  if (start > 65535) throw new Error('No free TCP port available for the TPT proxy');
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
     srv.listen(start, '127.0.0.1', () => {
       const addr = srv.address() as net.AddressInfo;
       srv.close(() => resolve(addr.port));
     });
-    srv.on('error', () => {
-      findFreePort(start + 1).then(resolve, reject);
+    srv.on('error', (err: NodeJS.ErrnoException) => {
+      // Only a taken port should move us along; anything else (EACCES, etc.) is a real failure
+      if (err.code === 'EADDRINUSE') {
+        findFreePort(start + 1).then(resolve, reject);
+      } else {
+        reject(err);
+      }
     });
   });
 }
@@ -114,6 +130,40 @@ function sendErrorJson(res: http.ServerResponse, status: number, message: string
   res.end(JSON.stringify({ error: message }));
 }
 
+// Builds the outgoing headers for a provider. Auth style follows the provider the request
+// is actually sent to, which may differ from the global setting when the router picks another.
+function buildOutHeaders(
+  apiKey: string,
+  originalHeaders: http.IncomingHttpHeaders,
+  body: string,
+  upstreamProvider: UpstreamProvider,
+  extraHeaders: Record<string, string>
+): Record<string, string> {
+  const outHeaders: Record<string, string> = {
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(body).toString(),
+  };
+
+  if (apiKey) {
+    if (upstreamProvider === 'anthropic') {
+      outHeaders['x-api-key'] = apiKey;
+      outHeaders['anthropic-version'] = '2023-06-01';
+    } else {
+      outHeaders['authorization'] = `Bearer ${apiKey}`;
+    }
+  }
+
+  const passthroughHeaders = ['accept', 'user-agent', 'anthropic-version', 'anthropic-beta'];
+  for (const h of passthroughHeaders) {
+    if (originalHeaders[h]) {
+      outHeaders[h] = originalHeaders[h] as string;
+    }
+  }
+
+  Object.assign(outHeaders, extraHeaders);
+  return outHeaders;
+}
+
 function forwardRequest(
   targetUrl: string,
   apiKey: string,
@@ -121,41 +171,18 @@ function forwardRequest(
   method: string,
   originalHeaders: http.IncomingHttpHeaders,
   body: string,
-  format: 'anthropic' | 'openai',
-  upstreamProvider: string,
+  _format: 'anthropic' | 'openai',
+  upstreamProvider: UpstreamProvider,
   extraHeaders: Record<string, string> = {}
 ): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: string }> {
   return new Promise((resolve, reject) => {
     const url = new URL(targetUrl);
-    const fullPath = url.pathname.replace(/\/$/, '') + path;
-
-    const outHeaders: Record<string, string> = {
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(body).toString(),
-    };
-
-    if (apiKey) {
-      if (upstreamProvider === 'anthropic') {
-        outHeaders['x-api-key'] = apiKey;
-        outHeaders['anthropic-version'] = '2023-06-01';
-      } else {
-        outHeaders['authorization'] = `Bearer ${apiKey}`;
-      }
-    }
-
-    const passthroughHeaders = ['accept', 'user-agent', 'anthropic-version', 'anthropic-beta'];
-    for (const h of passthroughHeaders) {
-      if (originalHeaders[h]) {
-        outHeaders[h] = originalHeaders[h] as string;
-      }
-    }
-
-    Object.assign(outHeaders, extraHeaders);
+    const outHeaders = buildOutHeaders(apiKey, originalHeaders, body, upstreamProvider, extraHeaders);
 
     const options: https.RequestOptions = {
       hostname: url.hostname,
       port: url.port || (url.protocol === 'https:' ? 443 : 80),
-      path: fullPath,
+      path: buildUpstreamPath(url.pathname, path),
       method,
       headers: outHeaders,
     };
@@ -172,6 +199,7 @@ function forwardRequest(
         })
       );
     });
+    outReq.setTimeout(NON_STREAM_IDLE_MS, () => outReq.destroy(new Error('upstream idle timeout')));
     outReq.on('error', reject);
     outReq.write(body);
     outReq.end();
@@ -189,41 +217,18 @@ function forwardStreamingRequest(
   originalHeaders: http.IncomingHttpHeaders,
   body: string,
   _format: 'anthropic' | 'openai',
-  upstreamProvider: string,
+  upstreamProvider: UpstreamProvider,
   clientRes: http.ServerResponse,
   extraHeaders: Record<string, string> = {}
 ): Promise<{ accumulated: string; status: number }> {
   return new Promise((resolve) => {
     const url = new URL(targetUrl);
-    const fullPath = url.pathname.replace(/\/$/, '') + path;
-
-    const outHeaders: Record<string, string> = {
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(body).toString(),
-    };
-
-    if (apiKey) {
-      if (upstreamProvider === 'anthropic') {
-        outHeaders['x-api-key'] = apiKey;
-        outHeaders['anthropic-version'] = '2023-06-01';
-      } else {
-        outHeaders['authorization'] = `Bearer ${apiKey}`;
-      }
-    }
-
-    const passthroughHeaders = ['accept', 'user-agent', 'anthropic-version', 'anthropic-beta'];
-    for (const h of passthroughHeaders) {
-      if (originalHeaders[h]) {
-        outHeaders[h] = originalHeaders[h] as string;
-      }
-    }
-
-    Object.assign(outHeaders, extraHeaders);
+    const outHeaders = buildOutHeaders(apiKey, originalHeaders, body, upstreamProvider, extraHeaders);
 
     const options: https.RequestOptions = {
       hostname: url.hostname,
       port: url.port || (url.protocol === 'https:' ? 443 : 80),
-      path: fullPath,
+      path: buildUpstreamPath(url.pathname, path),
       method,
       headers: outHeaders,
     };
@@ -242,8 +247,8 @@ function forwardStreamingRequest(
           const responseBody = Buffer.concat(chunks).toString('utf8');
           if (!clientRes.headersSent) {
             clientRes.writeHead(status, { 'content-type': 'application/json' });
-            clientRes.end(responseBody);
           }
+          clientRes.end(responseBody);
           resolve({ accumulated: responseBody, status });
         });
         return;
@@ -258,8 +263,12 @@ function forwardStreamingRequest(
       });
 
       upstreamRes.on('data', (chunk: Buffer) => {
-        clientRes.write(chunk);
         chunks.push(chunk);
+        // Respect backpressure: a slow client pauses the upstream instead of growing memory
+        if (!clientRes.write(chunk)) {
+          upstreamRes.pause();
+          clientRes.once('drain', () => upstreamRes.resume());
+        }
       });
 
       upstreamRes.on('end', () => {
@@ -267,16 +276,26 @@ function forwardStreamingRequest(
         resolve({ accumulated: Buffer.concat(chunks).toString('utf8'), status });
       });
 
+      // A stream cut off mid-way is a failure: it must not be recorded or cached as a success
       upstreamRes.on('error', () => {
         clientRes.end();
-        resolve({ accumulated: Buffer.concat(chunks).toString('utf8'), status });
+        resolve({ accumulated: Buffer.concat(chunks).toString('utf8'), status: 502 });
       });
+    });
+
+    outReq.setTimeout(STREAM_IDLE_MS, () => outReq.destroy(new Error('upstream idle timeout')));
+
+    // Client went away: stop the upstream so it stops generating (and billing) tokens
+    clientRes.on('close', () => {
+      if (!clientRes.writableFinished) outReq.destroy();
     });
 
     outReq.on('error', (e) => {
       if (!clientRes.headersSent) {
         clientRes.writeHead(502, { 'content-type': 'application/json' });
         clientRes.end(JSON.stringify({ error: `Upstream streaming error: ${e}` }));
+      } else if (!clientRes.writableEnded) {
+        clientRes.end();
       }
       resolve({ accumulated: '', status: 502 });
     });
@@ -289,28 +308,31 @@ function forwardStreamingRequest(
 export async function startProxyServer(context: vscode.ExtensionContext): Promise<void> {
   sessionToken = context.globalState.get<string>('tpt.sessionToken');
   if (!sessionToken) {
-    sessionToken = require('crypto').randomBytes(32).toString('hex');
+    sessionToken = crypto.randomBytes(32).toString('hex');
     await context.globalState.update('tpt.sessionToken', sessionToken);
   }
 
-  const port = await findFreePort(PREFERRED_PORT);
-  activePort = port;
+  // Kick off non-blocking pricing fetch (uses cached data on subsequent activations), then
+  // check hourly; initPricing itself only refetches once the cache is a day old
+  const refreshPricing = () => initPricing(getConfig().openrouterApiKey).catch(() => { /* ignore network errors */ });
+  refreshPricing();
+  pricingTimer = setInterval(refreshPricing, 60 * 60 * 1000);
+  pricingTimer.unref();
 
-  // Kick off non-blocking pricing fetch (uses cached data on subsequent activations)
-  const initConfig = getConfig();
-  initPricing(initConfig.openrouterApiKey).catch(() => { /* ignore network errors */ });
-
-  await injectTerminalEnv(context, port);
-
-  server = http.createServer(async (req, res) => {
+  const handleRequest = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     const config = getConfig();
 
     // Security: require session token on all requests
-    const incomingToken = req.headers['x-tpt-token'] as string | undefined;
-    if (incomingToken !== sessionToken) {
+    if (!tokenMatches(req.headers['x-tpt-token'], sessionToken)) {
       sendErrorJson(res, 401,
         'Unauthorized: missing or invalid X-TPT-Token header. ' +
-        'Run "TPT: Copy Proxy URL to Clipboard" to get your session token.');
+        'Run "TPT: Copy Session Token" to copy it. For Claude Code, set ' +
+        'ANTHROPIC_CUSTOM_HEADERS="X-TPT-Token: <token>" (done automatically in new terminals).');
+      return;
+    }
+
+    if (!isAllowedPath(req.url ?? '/')) {
+      sendErrorJson(res, 404, `TPT: ${pathOnly(req.url ?? '/')} is not proxied`);
       return;
     }
 
@@ -391,6 +413,24 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       sendErrorJson(res, 413, `${e}`);
       return;
     }
+
+    // Requests without a body (e.g. GET /v1/models) are not JSON: pass them straight through
+    if (rawBody.trim() === '') {
+      const upstream = resolveUpstreamUrl(config);
+      try {
+        const forwarded = await forwardRequest(
+          upstream.baseUrl, upstream.apiKey,
+          req.url ?? '/', req.method ?? 'GET',
+          req.headers, '', detectFormat(req.url ?? '/'), config.upstreamProvider
+        );
+        res.writeHead(forwarded.status, filterResponseHeaders(forwarded.headers));
+        res.end(forwarded.body);
+      } catch (e) {
+        sendErrorJson(res, 502, `Upstream request failed: ${e}`);
+      }
+      return;
+    }
+
     const format = detectFormat(req.url ?? '/');
     let parsedBody: AnthropicRequest | OpenAIRequest | Record<string, unknown>;
     try {
@@ -434,25 +474,29 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       return;
     }
 
+    // The router may send this request to a different provider than the global setting
+    const provider: UpstreamProvider = pipelineResult.overrideUpstream?.provider ?? config.upstreamProvider;
+
     // Streaming path — pipe SSE chunks directly to the client
     const isStreaming = !!(pipelineResult.body as Record<string, unknown>).stream;
     if (isStreaming) {
       const upstream = pipelineResult.overrideUpstream ?? resolveUpstreamUrl(config);
       const outBody = JSON.stringify(pipelineResult.body);
       const tokensIn = countTokens(pipelineResult.body as AnthropicRequest | OpenAIRequest);
-      const extraHeaders = grokConversationHeaders(config.upstreamProvider, pipelineResult.body as Record<string, unknown>);
+      const extraHeaders = grokConversationHeaders(provider, pipelineResult.body as Record<string, unknown>);
       try {
         const { accumulated, status } = await forwardStreamingRequest(
           upstream.baseUrl, upstream.apiKey,
           req.url ?? '/', req.method ?? 'POST',
-          req.headers, outBody, format, config.upstreamProvider, res, extraHeaders
+          req.headers, outBody, format, provider, res, extraHeaders
         );
         const tokensOut = estimateStreamingTokensOut(accumulated, format);
+        const model = (pipelineResult.body as AnthropicRequest).model ?? 'unknown';
         await recordRequest({
-          model: (pipelineResult.body as AnthropicRequest).model ?? 'unknown',
+          model,
           tokensIn,
           tokensOut,
-          costUsd: status === 200 ? getCostUsd((pipelineResult.body as AnthropicRequest).model ?? '', tokensIn, tokensOut) : 0,
+          costUsd: status === 200 ? getCostUsd(model, tokensIn, tokensOut) : 0,
           moduleActions: pipelineResult.moduleActions,
           cacheHit: false,
         });
@@ -473,14 +517,14 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
     const upstream = pipelineResult.overrideUpstream ?? resolveUpstreamUrl(config);
     const outBody = JSON.stringify(pipelineResult.body);
     const tokensIn = countTokens(pipelineResult.body as AnthropicRequest | OpenAIRequest);
-    const nonStreamExtraHeaders = grokConversationHeaders(config.upstreamProvider, pipelineResult.body as Record<string, unknown>);
+    const nonStreamExtraHeaders = grokConversationHeaders(provider, pipelineResult.body as Record<string, unknown>);
 
     let forwarded;
     try {
       forwarded = await forwardRequest(
         upstream.baseUrl, upstream.apiKey,
         req.url ?? '/', req.method ?? 'POST',
-        req.headers, outBody, format, config.upstreamProvider, nonStreamExtraHeaders
+        req.headers, outBody, format, provider, nonStreamExtraHeaders
       );
     } catch (e) {
       log(`Upstream error: ${e}`);
@@ -488,13 +532,15 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       return;
     }
 
-    // Store in Token Shield cache
-    if (config.tokenShield.enabled && forwarded.status === 200 &&
-        'messages' in pipelineResult.body && Array.isArray((pipelineResult.body as AnthropicRequest).messages)) {
+    // Store under the same key Token Shield looked up with (the client's request, post-Vault).
+    // Responses that call a tool are tied to this turn and are never reused.
+    if (config.tokenShield.enabled && forwarded.status === 200 && pipelineResult.cacheKey &&
+        !responseHasToolCall(forwarded.body)) {
       await storeCachedResponse(
-        (pipelineResult.body as AnthropicRequest).messages,
+        pipelineResult.cacheKey.messages,
         forwarded.body,
-        config.tokenShield
+        config.tokenShield,
+        pipelineResult.cacheKey.scope
       );
     }
 
@@ -518,63 +564,134 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
 
     res.writeHead(forwarded.status, { 'content-type': 'application/json' });
     res.end(finalBody);
-  });
+  };
 
-  await new Promise<void>((resolve, reject) => {
-    server!.once('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        // Port was free during probe but taken before listen — try next port
-        server!.close();
-        findFreePort(port + 1).then((nextPort) => {
-          activePort = nextPort;
-          server!.listen(nextPort, '127.0.0.1', () => {
-            serverState = 'running';
-            log(`TPT proxy listening on http://localhost:${nextPort}`);
-            vscode.commands.executeCommand('setContext', 'tpt.proxyActive', true);
-            resolve();
-          });
-        }, reject);
-      } else {
-        serverState = 'error';
-        serverError = err.message;
-        activePort = undefined;
-        reject(err);
+  // A throw anywhere in the handler must answer the client, not leave the socket hanging
+  server = http.createServer((req, res) => {
+    handleRequest(req, res).catch((e) => {
+      log(`Request handler error: ${e}`);
+      if (!res.headersSent) {
+        sendErrorJson(res, 500, `TPT proxy error: ${e}`);
+      } else if (!res.writableEnded) {
+        res.end();
       }
     });
+  });
+
+  const listen = (port: number) => new Promise<void>((resolve, reject) => {
+    server!.once('error', reject);
     server!.listen(port, '127.0.0.1', () => {
-      serverState = 'running';
-      log(`TPT proxy listening on http://localhost:${port}`);
-      vscode.commands.executeCommand('setContext', 'tpt.proxyActive', true);
+      server!.off('error', reject);
+      resolve();
+    });
+  });
+
+  // The probe above can lose its port to another process before listen() runs; retry on the next one
+  let port = await findFreePort(PREFERRED_PORT);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await listen(port);
+      break;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== 'EADDRINUSE' || attempt >= MAX_PORT_ATTEMPTS) {
+        serverState = 'error';
+        serverError = (err as Error).message;
+        activePort = undefined;
+        throw err;
+      }
+      port = await findFreePort(port + 1);
+    }
+  }
+
+  activePort = port;
+  serverState = 'running';
+  log(`TPT proxy listening on http://127.0.0.1:${port}`);
+  vscode.commands.executeCommand('setContext', 'tpt.proxyActive', true);
+
+  // Terminals must point at the port actually bound, so inject only after listen succeeds
+  await injectTerminalEnv(port);
+}
+
+// Sends GET /v1/models through the running proxy, the same route a client takes. Reports what
+// the upstream answered, so a missing or wrong key shows up here instead of mid-session.
+export function testProxyConnection(): Promise<{ ok: boolean; message: string }> {
+  return new Promise((resolve) => {
+    if (!activePort || !sessionToken) {
+      resolve({ ok: false, message: 'The proxy is not running.' });
+      return;
+    }
+    const req = http.request(
+      { host: '127.0.0.1', port: activePort, path: '/v1/models', method: 'GET', headers: { 'x-tpt-token': sessionToken } },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
+        res.on('end', () => {
+          const status = res.statusCode ?? 0;
+          if (status >= 200 && status < 300) {
+            resolve({ ok: true, message: `Upstream answered HTTP ${status}.` });
+          } else {
+            const detail = Buffer.concat(chunks).toString('utf8').slice(0, 200);
+            resolve({ ok: false, message: `Upstream answered HTTP ${status}: ${detail}` });
+          }
+        });
+      }
+    );
+    req.setTimeout(15000, () => {
+      req.destroy();
+      resolve({ ok: false, message: 'No answer within 15 seconds.' });
+    });
+    req.on('error', (e) => resolve({ ok: false, message: `Could not reach the proxy: ${e.message}` }));
+    req.end();
+  });
+}
+
+// Resolves once the listening socket is closed, so deactivate can wait for it
+export function stopProxyServer(): Promise<void> {
+  clearInterval(pricingTimer);
+  pricingTimer = undefined;
+  const srv = server;
+  server = undefined;
+  activePort = undefined;
+  serverState = 'starting';
+  serverError = undefined;
+
+  return new Promise((resolve) => {
+    if (!srv) {
+      resolve();
+      return;
+    }
+    srv.closeAllConnections();
+    srv.close(() => {
+      log('TPT proxy stopped');
+      vscode.commands.executeCommand('setContext', 'tpt.proxyActive', false);
       resolve();
     });
   });
 }
 
-export function stopProxyServer(): void {
-  server?.close(() => {
-    log('TPT proxy stopped');
-    vscode.commands.executeCommand('setContext', 'tpt.proxyActive', false);
-  });
-  server = undefined;
-  activePort = undefined;
-  serverState = 'starting';
-  serverError = undefined;
-}
-
-async function injectTerminalEnv(context: vscode.ExtensionContext, port: number): Promise<void> {
+// Writes the proxy URL and token into terminal env. Failures are logged, not thrown: a window
+// with no workspace folder must still start the proxy and its commands.
+async function injectTerminalEnv(port: number): Promise<void> {
   const cfg = vscode.workspace.getConfiguration();
-  const proxyUrl = `http://localhost:${port}`;
+  const proxyUrl = `http://127.0.0.1:${port}`;
   const token = sessionToken!;
 
   const envPatch = {
     ANTHROPIC_BASE_URL: proxyUrl,
+    // Claude Code reads this to add headers to every request, which is how it sends the token
+    ANTHROPIC_CUSTOM_HEADERS: `X-TPT-Token: ${token}`,
     OPENAI_BASE_URL: `${proxyUrl}/v1`,
     TPT_TOKEN: token,
   };
 
-  for (const key of ['terminal.integrated.env.windows', 'terminal.integrated.env.linux', 'terminal.integrated.env.osx']) {
-    const current = cfg.get<Record<string, string>>(key, {});
-    await cfg.update(key, { ...current, ...envPatch }, vscode.ConfigurationTarget.Workspace);
+  try {
+    for (const key of ['terminal.integrated.env.windows', 'terminal.integrated.env.linux', 'terminal.integrated.env.osx']) {
+      const current = cfg.get<Record<string, string>>(key, {});
+      await cfg.update(key, { ...current, ...envPatch }, vscode.ConfigurationTarget.Workspace);
+    }
+  } catch (e) {
+    log(`Could not write terminal environment (open a folder to enable it): ${e}`);
   }
 }
 
@@ -619,7 +736,9 @@ async function checkBudget(): Promise<void> {
   const limit = cfg.costBudget.dailyLimitUsd;
   if (!limit) return;
 
-  const todayKey = new Date().toISOString().slice(0, 10);
+  // Local calendar day, the same day boundary getTodayCostUsd uses (UTC would reset mid-afternoon in some zones)
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   if (budgetAlertShownToday === todayKey) return;
 
   const spent = await getTodayCostUsd();
@@ -635,4 +754,3 @@ async function checkBudget(): Promise<void> {
     });
   }
 }
-
