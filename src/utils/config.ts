@@ -11,6 +11,8 @@ export const UPSTREAM_PROVIDERS = [
   'glm',
   'mimo',
   'mistral',
+  'groq',
+  'gemini',
   'local',
   'custom',
 ] as const;
@@ -34,6 +36,8 @@ export interface TptConfig {
   glmApiKey: string;
   mimoApiKey: string;
   mistralApiKey: string;
+  groqApiKey: string;
+  geminiApiKey: string;
   localBaseUrl: string;
   customBaseUrl: string;
   customApiKey: string;
@@ -87,6 +91,8 @@ export function getConfig(): TptConfig {
     glmApiKey: c.get<string>('glmApiKey', ''),
     mimoApiKey: c.get<string>('mimoApiKey', ''),
     mistralApiKey: c.get<string>('mistralApiKey', ''),
+    groqApiKey: c.get<string>('groqApiKey', ''),
+    geminiApiKey: c.get<string>('geminiApiKey', ''),
     localBaseUrl: c.get<string>('localBaseUrl', 'http://localhost:11434/v1'),
     customBaseUrl: c.get<string>('customBaseUrl', ''),
     customApiKey: c.get<string>('customApiKey', ''),
@@ -237,6 +243,11 @@ export function resolveUpstreamUrl(config: TptConfig): { baseUrl: string; apiKey
       return { baseUrl: 'https://api.xiaomimimo.com/v1', apiKey: config.mimoApiKey };
     case 'mistral':
       return { baseUrl: 'https://api.mistral.ai/v1', apiKey: config.mistralApiKey };
+    case 'groq':
+      return { baseUrl: 'https://api.groq.com/openai/v1', apiKey: config.groqApiKey };
+    case 'gemini':
+      // Gemini's OpenAI-compatible endpoint has no /v1 suffix; see upstreamRequestPath
+      return { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', apiKey: config.geminiApiKey };
     case 'local': {
       const baseUrl = (config.localBaseUrl || 'http://localhost:11434/v1').trim();
       validateUserSuppliedUrl(baseUrl);

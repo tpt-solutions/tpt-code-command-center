@@ -30,6 +30,14 @@ export function buildUpstreamPath(basePathname: string, requestUrl: string): str
   return '/' + [...baseSegs, ...reqSegs].join('/') + query;
 }
 
+// Clients always address the proxy with /v1/... paths. Most provider base URLs end in /v1, so
+// buildUpstreamPath joins them without repeating it. Gemini's OpenAI-compatible base is
+// .../v1beta/openai, which does not end in /v1, so the client's /v1 is dropped for Gemini.
+export function upstreamRequestPath(provider: string, requestUrl: string): string {
+  if (provider !== 'gemini') return requestUrl;
+  return requestUrl.replace(/^\/v1(?=[/?]|$)/, '');
+}
+
 // The key a client sends as "Authorization: Bearer <key>" (Roo Code, Continue, Cline and most
 // OpenAI-compatible clients). Returns undefined for other schemes and for repeated headers.
 export function bearerToken(authorization: string | string[] | undefined): string | undefined {

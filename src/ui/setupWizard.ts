@@ -93,6 +93,22 @@ const PROVIDERS: ProviderOption[] = [
     keyUrl: 'https://console.mistral.ai/api-keys',
   },
   {
+    label: '$(zap) Groq',
+    description: 'Groq — fast OpenAI-compatible inference',
+    provider: 'groq',
+    keyLabel: 'Groq API key',
+    keyPlaceholder: '',
+    keyUrl: 'https://console.groq.com/keys',
+  },
+  {
+    label: '$(zap) Gemini',
+    description: 'Google Gemini through its OpenAI-compatible endpoint',
+    provider: 'gemini',
+    keyLabel: 'Gemini API key',
+    keyPlaceholder: '',
+    keyUrl: 'https://aistudio.google.com/apikey',
+  },
+  {
     label: '$(server) Local / Ollama',
     description: 'Local model running at localhost:11434 — no API key needed',
     provider: 'local',
@@ -121,6 +137,8 @@ const PROVIDER_KEY_SETTING: Record<string, string> = {
   glm: 'glmApiKey',
   mimo: 'mimoApiKey',
   mistral: 'mistralApiKey',
+  groq: 'groqApiKey',
+  gemini: 'geminiApiKey',
   custom: 'customApiKey',
 };
 

@@ -74,7 +74,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // First-run: offer setup wizard if no API key is configured
   const cfg = vscode.workspace.getConfiguration('tpt');
-  const hasAnyKey = ['openrouterApiKey', 'anthropicApiKey', 'openaiApiKey', 'deepseekApiKey', 'grokApiKey', 'qwenApiKey', 'kimiApiKey', 'glmApiKey', 'mimoApiKey', 'mistralApiKey']
+  const hasAnyKey = ['openrouterApiKey', 'anthropicApiKey', 'openaiApiKey', 'deepseekApiKey', 'grokApiKey', 'qwenApiKey', 'kimiApiKey', 'glmApiKey', 'mimoApiKey', 'mistralApiKey', 'groqApiKey', 'geminiApiKey']
     .some((k) => !!cfg.get<string>(k, ''));
   if (!hasAnyKey && !context.globalState.get<boolean>('tpt.wizardDismissed')) {
     vscode.window.showInformationMessage(
@@ -316,6 +316,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         c.update('glmApiKey', '', target),
         c.update('mimoApiKey', '', target),
         c.update('mistralApiKey', '', target),
+        c.update('groqApiKey', '', target),
+        c.update('geminiApiKey', '', target),
         c.update('customApiKey', '', target),
         c.update('customBaseUrl', '', target),
         c.update('upstreamProvider', 'openrouter', target),

@@ -15,7 +15,7 @@ import { countTokens, getTodayCostUsd, getThisMonthCostUsd } from '../ledger/led
 import { getCostUsd, initPricing } from '../ledger/pricing';
 import { captureRateLimitHeaders, recordActivity } from '../modules/quotaTracker';
 import { readUpstreamUsage } from '../ledger/usage';
-import { bearerToken, buildUpstreamPath, isAllowedPath, pathOnly, tokenMatches } from './requestPaths';
+import { bearerToken, buildUpstreamPath, isAllowedPath, pathOnly, tokenMatches, upstreamRequestPath } from './requestPaths';
 
 const PREFERRED_PORT = 7331;
 const MAX_PORT_ATTEMPTS = 10;
@@ -393,7 +393,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       if (isStreamingBypass) {
         await forwardStreamingRequest(
           upstream.baseUrl, upstream.apiKey,
-          req.url ?? '/', req.method ?? 'POST',
+          upstreamRequestPath(config.upstreamProvider, req.url ?? '/'), req.method ?? 'POST',
           req.headers, rawBody, format, config.upstreamProvider, res, bypassExtraHeaders
         );
         return;
@@ -402,7 +402,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       try {
         const forwarded = await forwardRequest(
           upstream.baseUrl, upstream.apiKey,
-          req.url ?? '/', req.method ?? 'POST',
+          upstreamRequestPath(config.upstreamProvider, req.url ?? '/'), req.method ?? 'POST',
           req.headers, rawBody, format, config.upstreamProvider, bypassExtraHeaders
         );
         captureRateLimitHeaders(forwarded.headers as Record<string, string>);
@@ -428,7 +428,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       try {
         const forwarded = await forwardRequest(
           upstream.baseUrl, upstream.apiKey,
-          req.url ?? '/', req.method ?? 'GET',
+          upstreamRequestPath(config.upstreamProvider, req.url ?? '/'), req.method ?? 'GET',
           req.headers, '', detectFormat(req.url ?? '/'), config.upstreamProvider
         );
         res.writeHead(forwarded.status, filterResponseHeaders(forwarded.headers));
@@ -511,7 +511,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       try {
         const { accumulated, status } = await forwardStreamingRequest(
           upstream.baseUrl, upstream.apiKey,
-          req.url ?? '/', req.method ?? 'POST',
+          upstreamRequestPath(provider, req.url ?? '/'), req.method ?? 'POST',
           req.headers, outBody, format, provider, res, extraHeaders
         );
         // Prefer the provider's own counts; the local estimates are only a fallback
@@ -550,7 +550,7 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
     try {
       forwarded = await forwardRequest(
         upstream.baseUrl, upstream.apiKey,
-        req.url ?? '/', req.method ?? 'POST',
+        upstreamRequestPath(provider, req.url ?? '/'), req.method ?? 'POST',
         req.headers, outBody, format, provider, nonStreamExtraHeaders
       );
     } catch (e) {
