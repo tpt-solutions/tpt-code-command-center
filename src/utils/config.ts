@@ -1,18 +1,25 @@
 import * as vscode from 'vscode';
 
-export type UpstreamProvider =
-  | 'openrouter'
-  | 'anthropic'
-  | 'openai'
-  | 'deepseek'
-  | 'qwen'
-  | 'kimi'
-  | 'grok'
-  | 'glm'
-  | 'mimo'
-  | 'mistral'
-  | 'local'
-  | 'custom';
+export const UPSTREAM_PROVIDERS = [
+  'openrouter',
+  'anthropic',
+  'openai',
+  'deepseek',
+  'qwen',
+  'kimi',
+  'grok',
+  'glm',
+  'mimo',
+  'mistral',
+  'local',
+  'custom',
+] as const;
+
+export type UpstreamProvider = typeof UPSTREAM_PROVIDERS[number];
+
+export function isUpstreamProvider(value: unknown): value is UpstreamProvider {
+  return typeof value === 'string' && (UPSTREAM_PROVIDERS as readonly string[]).includes(value);
+}
 
 export interface TptConfig {
   enabled: boolean;
@@ -156,19 +163,58 @@ export function validateUserSuppliedUrl(raw: string): void {
   if (!['http:', 'https:'].includes(url.protocol)) {
     throw new Error(`Only http/https URLs are allowed (got ${url.protocol})`);
   }
-  const h = url.hostname.toLowerCase();
-  // Block numeric private/reserved IP ranges; allow 'localhost' by name for local services
-  const blockedNumericIp =
-    /^127\./.test(h) ||
-    /^10\./.test(h) ||
-    /^192\.168\./.test(h) ||
-    /^169\.254\./.test(h) ||
-    /^172\.(1[6-9]|2\d|3[01])\./.test(h) ||
-    h === '0.0.0.0' ||
-    h === '::1';
-  if (blockedNumericIp) {
+  // URL.hostname keeps IPv6 brackets ("[::1]"), so strip them before matching
+  const h = url.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (isBlockedHost(h)) {
     throw new Error(`Private/reserved IP ranges are not allowed as upstream URLs: ${h}`);
   }
+}
+
+// 'localhost' is allowed by name (Ollama and similar); numeric private, loopback,
+// link-local, CGNAT and metadata addresses are not, in any notation.
+function isBlockedHost(h: string): boolean {
+  // IPv4-mapped IPv6: "::ffff:127.0.0.1", or the hex form URL parsing produces ("::ffff:7f00:1")
+  const mapped = /^::ffff:(?:(\d+\.\d+\.\d+\.\d+)|([0-9a-f]{1,4}):([0-9a-f]{1,4}))$/.exec(h);
+  if (mapped) {
+    if (mapped[1]) return isBlockedIpv4(mapped[1]);
+    const hi = parseInt(mapped[2], 16);
+    const lo = parseInt(mapped[3], 16);
+    return isBlockedIpv4([hi >> 8, hi & 0xff, lo >> 8, lo & 0xff].join('.'));
+  }
+
+  if (h.includes(':')) {
+    // Loopback, unspecified, unique-local (fc00::/7), link-local (fe80::/10)
+    return h === '::1' || h === '::' || /^f[cd]/.test(h) || /^fe[89ab]/.test(h);
+  }
+
+  // Dotted-quad IPv4 only; decimal/hex/octal forms are normalised below
+  const parsed = parseLooseIpv4(h);
+  if (parsed) return isBlockedIpv4(parsed);
+  return false;
+}
+
+// Accepts 127.0.0.1, 2130706433 (decimal), 0x7f000001 (hex) and similar single-number forms
+function parseLooseIpv4(h: string): string | undefined {
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(h)) return h;
+  if (/^(0x[0-9a-f]+|\d+)$/.test(h)) {
+    const n = h.startsWith('0x') ? parseInt(h, 16) : Number(h);
+    if (!Number.isFinite(n) || n < 0 || n > 0xffffffff) return undefined;
+    return [24, 16, 8, 0].map((s) => (n >>> s) & 0xff).join('.');
+  }
+  return undefined;
+}
+
+function isBlockedIpv4(ip: string): boolean {
+  const [a, b] = ip.split('.').map(Number);
+  return (
+    a === 0 ||                         // 0.0.0.0/8 "this network"
+    a === 10 ||                        // 10.0.0.0/8
+    a === 127 ||                       // loopback
+    (a === 169 && b === 254) ||        // link-local + cloud metadata
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) // CGNAT 100.64.0.0/10
+  );
 }
 
 export function resolveUpstreamUrl(config: TptConfig): { baseUrl: string; apiKey: string } {
@@ -192,12 +238,14 @@ export function resolveUpstreamUrl(config: TptConfig): { baseUrl: string; apiKey
     case 'mistral':
       return { baseUrl: 'https://api.mistral.ai/v1', apiKey: config.mistralApiKey };
     case 'local': {
-      validateUserSuppliedUrl(config.localBaseUrl || 'http://localhost:11434/v1');
-      return { baseUrl: config.localBaseUrl, apiKey: '' };
+      const baseUrl = (config.localBaseUrl || 'http://localhost:11434/v1').trim();
+      validateUserSuppliedUrl(baseUrl);
+      return { baseUrl, apiKey: '' };
     }
     case 'custom': {
-      validateUserSuppliedUrl(config.customBaseUrl || 'http://localhost');
-      return { baseUrl: config.customBaseUrl, apiKey: config.customApiKey };
+      const baseUrl = (config.customBaseUrl || 'http://localhost').trim();
+      validateUserSuppliedUrl(baseUrl);
+      return { baseUrl, apiKey: config.customApiKey };
     }
     case 'openrouter':
     default:
