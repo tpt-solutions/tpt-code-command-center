@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { testProxyConnection } from '../proxy/server';
+import { getChannel } from '../utils/logger';
 
 interface ProviderOption {
   label: string;
@@ -171,12 +173,26 @@ export async function runSetupWizard(context: vscode.ExtensionContext): Promise<
   // Mark wizard as completed so we don't prompt again on startup
   await context.globalState.update('tpt.wizardDismissed', true);
 
-  vscode.window.showInformationMessage(
-    `TPT configured to use ${opt.provider}. Open the dashboard to monitor usage.`,
-    'Open Dashboard'
+  // The proxy reads its config per request, so the new provider is live now. Check it
+  // reaches the provider, so a wrong key shows up here and not on the first real request.
+  const check = await testProxyConnection();
+  if (check.ok) {
+    vscode.window.showInformationMessage(
+      `TPT configured to use ${opt.provider}. ${check.message} Open the dashboard to monitor usage.`,
+      'Open Dashboard'
+    ).then((choice) => {
+      if (choice === 'Open Dashboard') {
+        vscode.commands.executeCommand('tpt.showDashboard');
+      }
+    });
+    return;
+  }
+
+  vscode.window.showWarningMessage(
+    `TPT is set to ${opt.provider}, but the check failed. ${check.message}`,
+    'Open Settings', 'Open Output'
   ).then((choice) => {
-    if (choice === 'Open Dashboard') {
-      vscode.commands.executeCommand('tpt.showDashboard');
-    }
+    if (choice === 'Open Settings') vscode.commands.executeCommand('tpt.openSettings');
+    if (choice === 'Open Output') getChannel().show(true);
   });
 }
