@@ -46,6 +46,11 @@ test('isValidEditRange: zero, negative, reversed and past-EOF starts are rejecte
   assert.equal(isValidEditRange(11, 12, 10), false);
 });
 
+test('isValidEditRange: an end past the last line is rejected, not clamped', () => {
+  assert.equal(isValidEditRange(5, 11, 10), false);
+  assert.equal(isValidEditRange(1, 10, 10), true);
+});
+
 test('isValidEditRange: non-integer line numbers are rejected', () => {
   assert.equal(isValidEditRange(1.5, 3, 10), false);
   assert.equal(isValidEditRange('2', 3, 10), false);

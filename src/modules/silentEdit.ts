@@ -48,23 +48,25 @@ export function extractEditInstructions(text: string): SilentEditInstruction[] {
   return out;
 }
 
+// `schema` lets an installed Forge system-prompt template replace the built-in text.
 export function runSilentEditInjection(
   body: AnthropicRequest | OpenAIRequest | Record<string, unknown>,
-  format: 'anthropic' | 'openai'
+  format: 'anthropic' | 'openai',
+  schema: string = SILENT_EDIT_SCHEMA
 ): AnthropicRequest | OpenAIRequest | Record<string, unknown> {
   const b = body as AnthropicRequest;
 
   if (format === 'anthropic') {
     if (typeof b.system === 'string') {
-      return { ...b, system: SILENT_EDIT_SCHEMA + '\n\n' + b.system };
+      return { ...b, system: schema + '\n\n' + b.system };
     }
     if (Array.isArray(b.system)) {
       return {
         ...b,
-        system: [{ type: 'text', text: SILENT_EDIT_SCHEMA }, ...b.system],
+        system: [{ type: 'text', text: schema }, ...b.system],
       };
     }
-    return { ...b, system: SILENT_EDIT_SCHEMA };
+    return { ...b, system: schema };
   }
 
   // OpenAI format: prepend to system message or add one
@@ -73,10 +75,10 @@ export function runSilentEditInjection(
   if (sysIdx >= 0) {
     messages[sysIdx] = {
       ...messages[sysIdx],
-      content: SILENT_EDIT_SCHEMA + '\n\n' + (typeof messages[sysIdx].content === 'string' ? messages[sysIdx].content : JSON.stringify(messages[sysIdx].content)),
+      content: schema + '\n\n' + (typeof messages[sysIdx].content === 'string' ? messages[sysIdx].content : JSON.stringify(messages[sysIdx].content)),
     };
   } else {
-    messages.unshift({ role: 'system', content: SILENT_EDIT_SCHEMA });
+    messages.unshift({ role: 'system', content: schema });
   }
   return { ...b, messages };
 }
@@ -145,7 +147,7 @@ export function proposeEdits(instructions: SilentEditInstruction[]): void {
   }, (err) => log(`Silent Edit: confirmation failed: ${err}`));
 }
 
-async function applyEdits(instructions: SilentEditInstruction[]): Promise<void> {
+export async function applyEdits(instructions: SilentEditInstruction[]): Promise<void> {
   const workspaceEdit = new vscode.WorkspaceEdit();
   const folders = vscode.workspace.workspaceFolders;
   if (!folders?.length) return;
@@ -175,7 +177,7 @@ async function applyEdits(instructions: SilentEditInstruction[]): Promise<void> 
     }
 
     const startLine = instr.startLine - 1;
-    const endLine = Math.min(document.lineCount - 1, instr.endLine - 1);
+    const endLine = instr.endLine - 1; // validated above: within the document
     const endChar = document.lineAt(endLine).range.end.character;
     const range = new vscode.Range(startLine, 0, endLine, endChar);
 

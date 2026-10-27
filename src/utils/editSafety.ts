@@ -18,10 +18,11 @@ export function resolveWorkspaceFile(rootPath: string, file: unknown): string | 
 
 // Validates a 1-based inclusive line range against a document's line count.
 // Line numbers come from the model and routinely drift, so reject anything
-// that is not a positive integer range inside the file.
+// that is not a positive integer range inside the file. An end past the last line
+// is rejected too: clamping it would quietly replace everything down to the end of the file.
 export function isValidEditRange(startLine: unknown, endLine: unknown, lineCount: number): boolean {
   if (!Number.isInteger(startLine) || !Number.isInteger(endLine)) return false;
   const s = startLine as number;
   const e = endLine as number;
-  return s >= 1 && e >= s && s <= lineCount;
+  return s >= 1 && e >= s && s <= lineCount && e <= lineCount;
 }
