@@ -441,6 +441,22 @@ export async function startProxyServer(context: vscode.ExtensionContext): Promis
       return;
     }
 
+    // Hard stop, checked again with this request's own estimate. Concurrent requests otherwise all
+    // pass the check above before any of them is recorded and overshoot the limit together.
+    if (config.enabled && config.costBudget.hardStop && config.costBudget.dailyLimitUsd > 0) {
+      const limit = config.costBudget.dailyLimitUsd;
+      const estimate = estimateRequestCostUsd(parsedBody);
+      const spent = await getTodayCostUsd();
+      // Check and reserve with no await in between, so no other request can slip in between
+      if (spent + inFlightUsd + estimate > limit) {
+        sendErrorJson(res, 429,
+          `TPT: this request would exceed the daily budget of $${limit.toFixed(2)} ` +
+          `(spent $${spent.toFixed(4)} today, $${inFlightUsd.toFixed(4)} in flight).`);
+        return;
+      }
+      reserveBudget(res, estimate);
+    }
+
     const proxyReq: ProxyRequest = {
       method: req.method ?? 'POST',
       path: req.url ?? '/',
@@ -734,6 +750,24 @@ function estimateStreamingTokensOut(sseBody: string, format: 'anthropic' | 'open
   }
   // Rough fallback: SSE overhead is significant so divide by more than plain JSON
   return Math.ceil(sseBody.length / 20);
+}
+
+// Estimated cost of requests still in flight. Released when each response closes.
+let inFlightUsd = 0;
+
+function reserveBudget(res: http.ServerResponse, usd: number): void {
+  inFlightUsd += usd;
+  res.once('close', () => {
+    inFlightUsd -= usd;
+  });
+}
+
+// Upper-bound estimate: the prompt as counted locally, and the full max_tokens as output.
+// A model with no known price estimates to 0, so the budget cannot stop it.
+function estimateRequestCostUsd(body: unknown): number {
+  const b = body as { model?: string; max_tokens?: number };
+  const maxOut = typeof b.max_tokens === 'number' ? b.max_tokens : 4096;
+  return getCostUsd(b.model ?? '', countTokens(body as AnthropicRequest | OpenAIRequest), maxOut);
 }
 
 let budgetAlertShownToday = '';
