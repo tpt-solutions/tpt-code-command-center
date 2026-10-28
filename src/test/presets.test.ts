@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'fs';
 import * as path from 'path';
-import { PRESETS } from '../ui/presets';
+import { PRESETS, presetsForProvider } from '../ui/presets';
 import { isUpstreamProvider } from '../utils/config';
 
 // out/test/presets.test.js → repo root/package.json
@@ -30,4 +30,15 @@ test('the Anthropic preset only routes to providers that exist', () => {
   const rules = anthropic.settings['router.rules'] as Array<{ provider: string }>;
   assert.ok(rules.length > 0);
   for (const rule of rules) assert.equal(isUpstreamProvider(rule.provider), true);
+});
+
+test('wizard offers only presets that leave the chosen provider alone, or set it to that same provider', () => {
+  const forOpenAi = presetsForProvider('openai').map((p) => p.id);
+  assert.ok(forOpenAi.includes('frugal'));
+  assert.ok(forOpenAi.includes('privacy'));
+  assert.ok(!forOpenAi.includes('local'), 'the local preset would replace an OpenAI choice');
+  assert.ok(!forOpenAi.includes('anthropic'), 'the Anthropic preset would replace an OpenAI choice');
+
+  assert.ok(presetsForProvider('anthropic').some((p) => p.id === 'anthropic'));
+  assert.ok(presetsForProvider('local').some((p) => p.id === 'local'));
 });

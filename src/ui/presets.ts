@@ -66,6 +66,12 @@ export const PRESETS: Preset[] = [
   },
 ];
 
+// The presets the setup wizard may offer once a provider is chosen: those that leave the provider
+// alone, and those that set it to that same provider. Any other would replace the user's choice.
+export function presetsForProvider(provider: string): Preset[] {
+  return PRESETS.filter((p) => !('upstreamProvider' in p.settings) || p.settings.upstreamProvider === provider);
+}
+
 // Writes the preset into workspace settings when a folder is open, otherwise into user settings
 // (a window with no folder cannot hold workspace settings).
 export async function applyPreset(preset: Preset): Promise<void> {

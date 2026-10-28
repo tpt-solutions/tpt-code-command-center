@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { testProxyConnection } from '../proxy/server';
 import { getChannel } from '../utils/logger';
 import { ApiKeySetting, storeKey } from '../utils/secrets';
+import { Preset, applyPreset, presetsForProvider } from './presets';
 
 interface ProviderOption {
   label: string;
@@ -167,6 +168,23 @@ async function offerToolSetup(): Promise<void> {
   if (pick) await pick.run();
 }
 
+interface PresetItem extends vscode.QuickPickItem {
+  preset?: Preset;
+}
+
+// Optional, after the provider is set and before the connection check. Skipping keeps the settings.
+async function offerPreset(provider: string): Promise<void> {
+  const items: PresetItem[] = [
+    { label: 'Keep my current settings', description: 'Change them later with TPT: Apply Settings Preset' },
+    ...presetsForProvider(provider).map((p) => ({ label: p.label, description: p.description, preset: p })),
+  ];
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Optional — apply a settings preset now? It overwrites the settings it lists.',
+    ignoreFocusOut: true,
+  });
+  if (pick?.preset) await applyPreset(pick.preset);
+}
+
 export async function runSetupWizard(context: vscode.ExtensionContext): Promise<void> {
   // Step 1: pick provider
   const providerPick = await vscode.window.showQuickPick(
@@ -216,6 +234,7 @@ export async function runSetupWizard(context: vscode.ExtensionContext): Promise<
   await cfg.update('upstreamProvider', opt.provider, target);
   // Mark wizard as completed so we don't prompt again on startup
   await context.globalState.update('tpt.wizardDismissed', true);
+  await offerPreset(opt.provider);
 
   // The proxy reads its config per request, so the new provider is live now. Check it
   // reaches the provider, so a wrong key shows up here and not on the first real request.
