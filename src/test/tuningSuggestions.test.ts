@@ -47,3 +47,19 @@ test('suggestions: a history that fits the settings gets an explicit no-change l
   const lines = tuningSuggestions({ originals: sizes(0, 20).map(() => 800), memorySummarisedRequests: 0 }, on);
   assert.deepEqual(lines, ['No change suggested by the measured requests.']);
 });
+
+test('suggestions: the Memory Weaver threshold is the 90th percentile, rounded up to 500 tokens', () => {
+  const lines = tuningSuggestions({ originals: sizes(10, 10), memorySummarisedRequests: 0 }, { ...on, memoryEnabled: false });
+  assert.ok(lines.some((l) => /tpt\.memoryWeaver\.tokenThreshold of 9000 would/.test(l)));
+});
+
+test('suggestions: the router rule carries the median request size, rounded up to 500 tokens', () => {
+  // 15 short requests of 500 and 5 of 9000: the median is 500, so the rule covers half of them
+  const lines = tuningSuggestions({ originals: sizes(15, 5), memorySummarisedRequests: 0 }, { ...on, routerEnabled: false });
+  assert.ok(lines.some((l) => l.includes('{"match":{"maxTokens":500},"model":"<cheaper model>","provider":"<provider>"}')));
+});
+
+test('suggestions: a router rule for a median above the built-in limit is capped at 2000 tokens', () => {
+  const lines = tuningSuggestions({ originals: Array(20).fill(1800), memorySummarisedRequests: 0 }, { ...on, routerEnabled: false });
+  assert.ok(lines.some((l) => l.includes('"maxTokens":2000')));
+});

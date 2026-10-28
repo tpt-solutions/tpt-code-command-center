@@ -115,6 +115,16 @@ export interface TuningSettings {
   routerEnabled: boolean;
 }
 
+// The value that `p` (0–1) of the sizes fall at or below; nearest-rank, so it is always a measured size
+export function percentile(values: number[], p: number): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1));
+  return sorted[index];
+}
+
+// Rounds up to a multiple of `step`, so a suggested setting reads as a round number
+const roundUp = (value: number, step: number): number => Math.ceil(value / step) * step;
+
 export function tuningSuggestions(sample: TuningSample, settings: TuningSettings): string[] {
   const n = sample.originals.length;
   if (n < MIN_TUNING_SAMPLE) {
@@ -126,7 +136,9 @@ export function tuningSuggestions(sample: TuningSample, settings: TuningSettings
   const over = sample.originals.filter((t) => t > settings.memoryThreshold).length;
   if (over > 0 && over / n >= 0.1) {
     if (!settings.memoryEnabled) {
-      out.push(`${pct(over, n)} of requests are over the Memory Weaver threshold (${settings.memoryThreshold} tokens), and Memory Weaver is off. Turn on tpt.memoryWeaver.enabled to keep long conversations in check.`);
+      // A threshold at the 90th percentile summarises only the longest tenth of requests
+      const threshold = roundUp(percentile(sample.originals, 0.9), 500);
+      out.push(`${pct(over, n)} of requests are over the Memory Weaver threshold (${settings.memoryThreshold} tokens), and Memory Weaver is off. Turn on tpt.memoryWeaver.enabled to keep long conversations in check. A tpt.memoryWeaver.tokenThreshold of ${threshold} would summarise only the longest tenth of your requests.`);
     } else if (sample.memorySummarisedRequests / over < 0.5) {
       out.push(`${pct(over, n)} of requests are over the Memory Weaver threshold (${settings.memoryThreshold} tokens), but only ${sample.memorySummarisedRequests} were summarised. Check tpt.memoryWeaver.fallbackOrder and the summariser (Ollama or the proxy model).`);
     }
@@ -135,7 +147,9 @@ export function tuningSuggestions(sample: TuningSample, settings: TuningSettings
   if (!settings.routerEnabled) {
     const short = sample.originals.filter((t) => t <= SHORT_REQUEST_TOKENS).length;
     if (short / n >= 0.5) {
-      out.push(`${pct(short, n)} of requests are at most ${SHORT_REQUEST_TOKENS} tokens. The built-in router rule can send those to a cheaper model: try tpt.router.enabled, then compare Cost by Model in the dashboard. Dry run measures size, not the model that answers, so it cannot show this.`);
+      // The median request, rounded up to 500 tokens, is the size of the rule that covers half of them
+      const maxTokens = Math.min(SHORT_REQUEST_TOKENS, Math.max(500, roundUp(percentile(sample.originals, 0.5), 500)));
+      out.push(`${pct(short, n)} of requests are at most ${SHORT_REQUEST_TOKENS} tokens. A cheaper model for the short ones: turn on tpt.router.enabled, and add this to tpt.router.rules with the model and provider you choose: {"match":{"maxTokens":${maxTokens}},"model":"<cheaper model>","provider":"<provider>"}. Then compare Cost by Model in the dashboard. Dry run measures size, not the model that answers, so it cannot show this.`);
     }
   }
 
