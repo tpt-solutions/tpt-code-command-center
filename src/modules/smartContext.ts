@@ -4,6 +4,8 @@ import { ContentBlock, Message } from '../proxy/types';
 // web-tree-sitter is loaded lazily — types kept as any to avoid version-skew issues
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let Parser: any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let Language: any;
 let parserInitialized = false;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const parsersCache = new Map<string, any>();
@@ -21,7 +23,8 @@ async function getParser(language: string): Promise<any | undefined> {
 
   try {
     if (!Parser) {
-      Parser = require('web-tree-sitter');
+      // web-tree-sitter 0.26 exports Parser and Language as separate classes; init is on Parser
+      ({ Parser, Language } = require('web-tree-sitter'));
     }
     if (!parserInitialized) {
       // Locate the runtime WASM from the bundled media/wasm directory when available
@@ -35,7 +38,7 @@ async function getParser(language: string): Promise<any | undefined> {
     if (!wasmDir) return undefined; // WASM files not bundled — fall back to regex outline
 
     const wasmPath = path.join(wasmDir, wasmFile);
-    const langModule = await Parser.Language.load(wasmPath);
+    const langModule = await Language.load(wasmPath);
     const parser = new Parser();
     parser.setLanguage(langModule);
     parsersCache.set(language, parser);
@@ -103,20 +106,24 @@ function extractOutlineFromText(content: string): string {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function extractOutlineWithParser(tree: any, originalSource: string): string {
+function extractOutlineWithParser(tree: any, originalSource: string): string | undefined {
   const lines = originalSource.split('\n');
   const outline: string[] = [`[AST Outline — ${lines.length} lines total]`];
 
+  // Declaration node names across the bundled grammars: methods sit one level deeper than
+  // top-level declarations (inside a class body, namespace or impl block)
   const interestingTypes = new Set([
-    'function_declaration', 'function_definition', 'method_definition',
-    'class_declaration', 'class_definition', 'interface_declaration',
-    'type_alias_declaration', 'enum_declaration', 'struct_item', 'impl_item',
-    'function_item', 'trait_item',
+    'function_declaration', 'function_definition', 'method_definition', 'method_declaration',
+    'constructor_declaration', 'singleton_method',
+    'class_declaration', 'class_definition', 'class', 'interface_declaration', 'trait_declaration',
+    'type_alias_declaration', 'type_declaration', 'enum_declaration', 'struct_declaration',
+    'struct_item', 'enum_item', 'impl_item', 'function_item', 'trait_item',
+    'method', // Ruby
   ]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function walk(node: any, depth: number): void {
-    if (depth > 3) return;
+    if (depth > 6) return;
     if (interestingTypes.has(node.type)) {
       const line = node.startPosition.row + 1;
       const text = lines[node.startPosition.row]?.trim().substring(0, 120) ?? '';
@@ -129,7 +136,8 @@ function extractOutlineWithParser(tree: any, originalSource: string): string {
   }
 
   walk(tree.rootNode, 0);
-  return outline.join('\n');
+  // No declarations found: the caller uses the text outline, so a file is never reduced to a header
+  return outline.length > 1 ? outline.join('\n') : undefined;
 }
 
 export interface SmartContextResult {
@@ -215,7 +223,7 @@ async function outlineFor(content: string, toolPath: string | undefined): Promis
   let tree;
   try {
     tree = parser.parse(content);
-    return extractOutlineWithParser(tree, content);
+    return extractOutlineWithParser(tree, content) ?? extractOutlineFromText(content);
   } catch {
     return extractOutlineFromText(content);
   } finally {
