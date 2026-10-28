@@ -1,6 +1,6 @@
 # Contributing to TPT Code Command Center
 
-Thank you for considering a contribution. This project is Apache 2.0 licensed and welcomes pull requests, bug reports, and community configs for the Forge registry.
+Thank you for your interest. This project is dual-licensed under MIT or Apache 2.0, at your option. Contributions are **issues only** — bug reports, feature requests, and ideas are welcome via GitHub Issues, but pull requests are not accepted.
 
 ---
 
@@ -77,7 +77,7 @@ The pipeline in `proxy/pipeline.ts` is the core flow. Each module exports a pure
 
 ## Contributing to the Forge Registry
 
-The Forge registry lives in a separate repository: `tpt-forge/registry`.
+The Forge registry lives in this repository, in the `forge-registry/` folder (`index.json` and `configs/`).
 
 Community configs are plain JSON files. Supported types:
 
@@ -102,23 +102,13 @@ Community configs are plain JSON files. Supported types:
 { "text": "Your custom system prompt here." }
 ```
 
-To submit: open a PR against `tpt-forge/registry` with your JSON file and an entry in `index.json`.
+To suggest a config: open a GitHub Issue on `tpt-solutions/tpt-code-command-center` with your JSON inlined. See [forge-registry/CONTRIBUTING.md](forge-registry/CONTRIBUTING.md) for the format and checks.
 
 ---
 
-## Submitting a Pull Request
+## Reporting Bugs and Requesting Features
 
-1. Fork the repository
-2. Create a branch: `git checkout -b feat/your-feature`
-3. Make your changes and ensure `npm run compile` passes with zero errors
-4. Commit with a clear message describing *why* the change is needed
-5. Open a PR against `main` — describe the problem it solves and how to test it
-
----
-
-## Reporting Bugs
-
-Open a GitHub Issue with:
+Open a GitHub Issue. For bugs, include:
 
 - VS Code version
 - Extension version
