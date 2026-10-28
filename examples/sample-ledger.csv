@@ -1,0 +1,7 @@
+timestamp,date,model,tokens_in,tokens_out,cost_usd,cache_hit,module_actions
+1793091612000,2026-10-27T09:00:12.000Z,"claude-sonnet-5-5",18342,912,0.06420000,0,"vault:redacted=1; smartContext:replaced=1"
+1793091890000,2026-10-27T09:04:50.000Z,"claude-sonnet-5-5",2210,0,0.00000000,1,"tokenShield:hit"
+1793096103000,2026-10-27T10:15:03.000Z,"gpt-4o-mini",1020,310,0.00035000,0,"router:gpt-4o-mini@https://openrouter.ai/api/v1"
+1793096561000,2026-10-27T10:22:41.000Z,"deepseek-chat",5400,1200,0.00115000,0,"memoryWeaver:summarised"
+1793176200000,2026-10-28T08:30:00.000Z,"claude-haiku-5-5",900,120,0.00065000,0,"promptCache:breakpoints=2"
+1793176267000,2026-10-28T08:31:07.000Z,"claude-haiku-5-5",910,80,0.00057000,0,"silentEdit:injected"

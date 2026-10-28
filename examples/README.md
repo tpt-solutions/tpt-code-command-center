@@ -14,6 +14,7 @@ Config files you can drop in:
 
 - [router-anthropic-tiering.json](router-anthropic-tiering.json): `tpt.router.rules` for Claude-only use (Haiku for short requests, Sonnet for code).
 - [vault-custom-patterns.json](vault-custom-patterns.json): `tpt.vault.customRegex` samples for in-house credential formats.
+- [sample-ledger.csv](sample-ledger.csv): the shape of **TPT: Export Ledger to CSV** output. The rows are made up (illustrative prices and tokens), so use them to check your own spreadsheet or script, not to report real figures.
 
 Check that the proxy works before you debug anything else:
 
