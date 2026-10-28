@@ -16,7 +16,7 @@ import { showModelPicker } from './ui/modelPicker';
 import { log, getChannel, disposeChannel } from './utils/logger';
 import { getLastInspectSnapshot } from './utils/inspectStore';
 import { formatStageSavings, renderSavingsReport, tuningSuggestions } from './utils/savings';
-import { POLICY_FILE, readWorkspacePolicy, setTrustedPolicyHashes, isPolicyTrusted, markPolicyTrusted } from './modules/policy';
+import { POLICY_FILE, readPolicyState, describePolicyState, setTrustedPolicyHashes, isPolicyTrusted, markPolicyTrusted } from './modules/policy';
 import { showPromptDiff } from './ui/promptDiff';
 import { configureClineAuto } from './modules/clineConfig';
 import { runSetupWizard } from './ui/setupWizard';
@@ -110,7 +110,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // A workspace policy applies only once the user trusts this exact file. A changed file has a new
   // hash, so it asks again.
   setTrustedPolicyHashes(context.globalState.get<string[]>('tpt.policyTrust', []));
-  const policyFile = readWorkspacePolicy();
+  const policyState = readPolicyState();
+  if (policyState.kind === 'broken') {
+    vscode.window.showWarningMessage(
+      `${POLICY_FILE} is not valid JSON, so it is ignored. Run "TPT: Show Workspace Policy" for details.`
+    );
+  }
+  const policyFile = policyState.kind === 'loaded' ? policyState.loaded : undefined;
   if (policyFile && !isPolicyTrusted(policyFile)) {
     vscode.window.showWarningMessage(
       `This workspace has a TPT policy (${POLICY_FILE}). It can add Vault patterns, lower cost budgets and turn on dry run. Apply it?`,
@@ -126,17 +132,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // First-run: offer setup wizard if no API key is configured
   const current = getConfig() as unknown as Record<string, string>;
   const hasAnyKey = API_KEY_SETTINGS.some((k) => !!current[k]);
+  // The getting-started walkthrough replaces the old dismissible toast. It opens once; it stays in
+  // the Getting Started list afterwards, so nothing is lost when it is closed.
   if (!hasAnyKey && !context.globalState.get<boolean>('tpt.wizardDismissed')) {
-    vscode.window.showInformationMessage(
-      'Welcome to TPT Code Command Center! Set up your API key to get started.',
-      'Run Setup Wizard', 'Later'
-    ).then((choice) => {
-      if (choice === 'Run Setup Wizard') {
-        runSetupWizard(context);
-      } else {
-        context.globalState.update('tpt.wizardDismissed', true);
-      }
-    });
+    context.globalState.update('tpt.wizardDismissed', true);
+    vscode.commands.executeCommand(
+      'workbench.action.openWalkthrough',
+      `${context.extension.id}#tpt.gettingStarted`,
+      false
+    );
   }
 
   // Keep status bar updated on config changes; restart quota polling when provider/key changes
@@ -279,6 +283,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       for (const line of formatStageSavings(snapshot.stageTokens)) channel.appendLine(line);
     }),
 
+    vscode.commands.registerCommand('tpt.showPolicy', () => {
+      const state = readPolicyState();
+      const trusted = state.kind === 'loaded' && isPolicyTrusted(state.loaded);
+      const channel = getChannel();
+      channel.show(true);
+      channel.appendLine('\n─── TPT Workspace Policy ────────────────────────────────────');
+      for (const line of describePolicyState(state, trusted)) channel.appendLine(line);
+      channel.appendLine('─────────────────────────────────────────────────────────────\n');
+    }),
     vscode.commands.registerCommand('tpt.inspectLast', () => {
       const snapshot = getLastInspectSnapshot();
       if (!snapshot) {

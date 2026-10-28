@@ -216,7 +216,12 @@
           "type": "number",
           "default": 2,
           "description": "Representation level requested from tpt-weave: 2 = signatures (compact), 3 = skeleton (full signatures and types, more tokens).",
-          "enum": [1, 2, 3, 4]
+          "enum": [
+            1,
+            2,
+            3,
+            4
+          ]
         },
         "tpt.tokenShield.enabled": {
           "type": "boolean",
@@ -441,6 +446,10 @@
         "title": "TPT: Configure Models"
       },
       {
+        "command": "tpt.showPolicy",
+        "title": "TPT: Show Workspace Policy"
+      },
+      {
         "command": "tpt.inspectLast",
         "title": "TPT: Inspect Last Request"
       },
@@ -498,7 +507,61 @@
           "name": "Dashboard"
         }
       ]
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "tpt.gettingStarted",
+        "title": "Get started with TPT",
+        "description": "Connect a provider, check it works, and point your coding tool at TPT.",
+        "steps": [
+          {
+            "id": "tpt.step.provider",
+            "title": "Choose a provider and enter your key",
+            "description": "Pick the provider TPT should send requests to. Keys are stored in VS Code secret storage.",
+            "media": {
+              "markdown": "media/walkthrough/provider.md"
+            },
+            "completionEvents": [
+              "onCommand:tpt.runSetupWizard"
+            ]
+          },
+          {
+            "id": "tpt.step.check",
+            "title": "Check the connection",
+            "description": "A test request confirms the key and base URL work before your first real request.",
+            "media": {
+              "markdown": "media/walkthrough/check.md"
+            },
+            "completionEvents": [
+              "onCommand:tpt.testConnection"
+            ]
+          },
+          {
+            "id": "tpt.step.tool",
+            "title": "Point your tool at TPT",
+            "description": "Claude Code and Cline have setup commands. Other tools have guides in examples/.",
+            "media": {
+              "markdown": "media/walkthrough/tool.md"
+            },
+            "completionEvents": [
+              "onCommand:tpt.copyClaudeCodeSnippet",
+              "onCommand:tpt.configureCline"
+            ]
+          },
+          {
+            "id": "tpt.step.dashboard",
+            "title": "Watch the savings",
+            "description": "The dashboard shows cost by model and what each module saved.",
+            "media": {
+              "markdown": "media/walkthrough/dashboard.md"
+            },
+            "completionEvents": [
+              "onCommand:tpt.showDashboard"
+            ]
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run download-wasm && npm run compile",
@@ -506,7 +569,7 @@
     "watch": "tsc -watch -p ./",
     "lint": "eslint src --ext ts",
     "pretest": "npm run compile",
-    "test": "node --test out/test/vault.test.js out/test/vaultExtended.test.js out/test/hash.test.js out/test/router.test.js out/test/routerRules.test.js out/test/promptCache.test.js out/test/weave.test.js out/test/requestPaths.test.js out/test/editSafety.test.js out/test/config.test.js out/test/memoryWeaver.test.js out/test/tokenShield.test.js out/test/ledger.test.js out/test/silentEditParse.test.js out/test/promptCacheLimits.test.js out/test/presets.test.js out/test/usage.test.js out/test/pipeline.test.js out/test/ledgerPersistence.test.js out/test/weaveFreshness.test.js out/test/pricing.test.js out/test/forge.test.js out/test/smartContextRanges.test.js out/test/providers.test.js out/test/connection.test.js out/test/forgeBuiltins.test.js out/test/secrets.test.js out/test/translate.test.js out/test/streamBuffer.test.js out/test/tokenShieldStore.test.js out/test/memoryWeaverRun.test.js out/test/ledgerMerge.test.js out/test/summariserBackends.test.js out/test/silentEditApply.test.js out/test/translateReverse.test.js out/test/pipelineReverse.test.js out/test/pipelineDryRun.test.js out/test/savingsReport.test.js out/test/tuningSuggestions.test.js out/test/policy.test.js out/test/recall.test.js out/test/integration/proxy.integration.test.js out/test/integration/proxy.server.integration.test.js out/test/integration/proxy.reverse.integration.test.js",
+    "test": "node --test out/test/vault.test.js out/test/vaultExtended.test.js out/test/hash.test.js out/test/router.test.js out/test/routerRules.test.js out/test/promptCache.test.js out/test/weave.test.js out/test/requestPaths.test.js out/test/editSafety.test.js out/test/config.test.js out/test/memoryWeaver.test.js out/test/tokenShield.test.js out/test/ledger.test.js out/test/silentEditParse.test.js out/test/promptCacheLimits.test.js out/test/presets.test.js out/test/usage.test.js out/test/pipeline.test.js out/test/ledgerPersistence.test.js out/test/weaveFreshness.test.js out/test/pricing.test.js out/test/forge.test.js out/test/smartContextRanges.test.js out/test/providers.test.js out/test/connection.test.js out/test/forgeBuiltins.test.js out/test/secrets.test.js out/test/translate.test.js out/test/streamBuffer.test.js out/test/tokenShieldStore.test.js out/test/memoryWeaverRun.test.js out/test/ledgerMerge.test.js out/test/summariserBackends.test.js out/test/silentEditApply.test.js out/test/translateReverse.test.js out/test/pipelineReverse.test.js out/test/pipelineDryRun.test.js out/test/savingsReport.test.js out/test/tuningSuggestions.test.js out/test/policy.test.js out/test/semanticCache.test.js out/test/ledgerConcurrency.test.js out/test/forgeRegistry.test.js out/test/smartContextOutline.test.js out/test/recall.test.js out/test/integration/proxy.integration.test.js out/test/integration/proxy.server.integration.test.js out/test/integration/proxy.reverse.integration.test.js",
     "download-wasm": "node scripts/download-wasm.js"
   },
   "devDependencies": {
