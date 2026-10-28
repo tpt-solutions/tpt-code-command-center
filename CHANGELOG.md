@@ -9,7 +9,19 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+- **Getting-started walkthrough** (`Get started with TPT`) replaces the first-run toast: connect a provider, test the connection, point your tool at TPT, watch the dashboard.
+- **Starter Forge configs**: developer-token vault patterns (npm, PyPI, Docker Hub, GitLab, Hugging Face, Databricks, Azure Storage) and a shorter Silent Edit prompt.
+- **Tuning suggestions give values.** The router suggestion includes a ready-to-paste `maxTokens` rule from the median request, and the Memory Weaver suggestion includes a threshold at the 90th percentile.
+- **`TPT: Show Workspace Policy`** shows whether the repository's `tpt-policy.json` is present, valid and trusted, and what it would apply.
+- **Setup wizard preset step.** After the provider is set, the wizard offers the presets that fit it, or keeps the current settings. A preset that would change the provider is not offered.
+- **`examples/sample-ledger.csv`** shows the shape of the ledger CSV export. Its figures are made up.
+
 ### Fixed
+- **Ledger rows from two windows are no longer lost.** Two windows writing at the same moment could each overwrite the other's rows. A lock file now serialises the write; four concurrent writers keep all their rows.
+- **Unpinned Forge entries are contained.** An unpinned remote entry can no longer replace a built-in of the same name, the background refresh skips it, and a manual install asks for confirmation.
+- **Smart Context outlines now use the parser.** The bundled tree-sitter runtime (web-tree-sitter 0.26) exports `Parser` and `Language` as separate classes, so the old lookup threw on every file and every outline silently fell back to the regex. Declarations inside method bodies are now listed (TypeScript, C#), and Go types and methods, Rust enums, Java and C# methods, and PHP and Ruby classes and methods are listed too. A file with no declarations gets the text outline, not just a header.
+- **A broken `tpt-policy.json` is reported.** It was ignored without a word. TPT now shows a warning at activation.
 - **`count_tokens` is never cached or summarised.** It shares its messages with a real chat request, so its count could be stored as that request's cached answer, and a later chat request would have got `{input_tokens}` back. Memory Weaver could also call a summariser for a count. Now it gets no cache key and no summary. An Anthropic-format client routed to an OpenAI-compatible provider gets the count locally, instead of a 404.
 
 ### Changed

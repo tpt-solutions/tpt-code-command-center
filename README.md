@@ -222,6 +222,8 @@ Anthropic and Mistral are the two providers in TPT's list that require an explic
 | `tpt.forge.autoUpdate` | `true` | On activation, re-install the Forge entries already installed in this workspace from the registry. This makes a network request to the registry when entries are installed |
 | `tpt.forge.registryUrl` | `""` | Registry index URL. Empty uses the official registry. Must be `https` and cannot point at a private address |
 
+A registry entry with a `sha256` pin is checked against the downloaded bytes. An entry without one has no integrity check: a background refresh skips it, and **TPT: Browse Forge** asks you to confirm before installing it. An unpinned remote entry cannot replace a built-in of the same name.
+
 Installed entries take effect as follows:
 
 | Type | Effect |
@@ -267,6 +269,7 @@ Open the Command Palette (`Ctrl+Shift+P`) and type `TPT`:
 | `TPT: Show Token Savings (Last Request)` | Per-stage size of the last request: what each module saved, or added |
 | `TPT: Suggest Settings From History` | Read the measured requests and print suggestions for Memory Weaver and the router. Nothing is changed; needs 20 measured requests |
 | `TPT: Export Savings Report (This Month)` | Write a Markdown report of what each module removed this month, to Downloads. Figures are estimates, not billed tokens |
+| `TPT: Show Workspace Policy` | Show whether the repository's `tpt-policy.json` is present, valid, trusted, and what it would apply. A broken file is named here |
 | `TPT: Inspect Last Request` | Dump the last request's processed body and module actions to the Output Channel |
 | `TPT: Show Prompt Diff` | Compare the original and processed prompt side by side |
 | `TPT: Auto-Configure Cline` | Set Cline's provider, base URL and headers to use TPT |
@@ -349,7 +352,7 @@ A repository can share settings through a `tpt-policy.json` file at its root, wh
 }
 ```
 
-A policy can only tighten your settings: it adds Vault patterns, lowers cost budgets, and can turn dry run on. It cannot add router rules or change the provider, so a repository cannot send your code to another provider. The policy applies only after you choose **Trust and apply** when VS Code asks. The trust is for that exact file, so a changed policy asks again.
+A policy can only tighten your settings: it adds Vault patterns, lowers cost budgets, and can turn dry run on. It cannot add router rules or change the provider, so a repository cannot send your code to another provider. The policy applies only after you choose **Trust and apply** when VS Code asks. The trust is for that exact file, so a changed policy asks again. A file that is not valid JSON is ignored, with a warning. **TPT: Show Workspace Policy** says what TPT made of it.
 
 ---
 
