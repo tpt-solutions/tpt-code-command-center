@@ -119,11 +119,59 @@ let unsaved: (string | number | null)[][] = [];
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let sqlApi: any;
 
+// Two windows can read the file, each add their rows, and write back: the second write would drop the
+// first's rows. A lock file makes the read-modify-write one step at a time across windows. A lock older
+// than LOCK_STALE_MS belonged to a window that died, so it is taken over.
+const LOCK_WAIT_MS = 5000;
+const LOCK_STALE_MS = 10000;
+const LOCK_RETRY_MS = 20;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+// Runs fn while holding the lock. Returns undefined when the lock could not be taken in time.
+export function withLedgerLock<T>(lockPath: string, fn: () => T): T | undefined {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (;;) {
+    try {
+      fs.closeSync(fs.openSync(lockPath, 'wx'));
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      try {
+        if (Date.now() - fs.statSync(lockPath).mtimeMs > LOCK_STALE_MS) {
+          fs.unlinkSync(lockPath);
+          continue;
+        }
+      } catch {
+        continue; // the holder released it between the two calls
+      }
+      if (Date.now() >= deadline) return undefined;
+      sleepSync(LOCK_RETRY_MS);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
+  }
+}
+
 // Returns false when the write failed. Persisting is best-effort: the in-memory ledger keeps counting.
 function updateDiskLedger(change: (disk: Database) => void): boolean {
   const tptDir = getTptDir();
   if (!tptDir || !sqlApi) return false;
   const dbPath = path.join(tptDir, 'ledger.db');
+  const written = withLedgerLock(`${dbPath}.lock`, () => writeDiskLedger(dbPath, change));
+  if (written === undefined) {
+    log(`Ledger: another window held ${dbPath}.lock; will retry on the next write`);
+    return false;
+  }
+  return written;
+}
+
+function writeDiskLedger(dbPath: string, change: (disk: Database) => void): boolean {
   const tmpPath = `${dbPath}.tmp`;
   try {
     const disk: Database = fs.existsSync(dbPath)
