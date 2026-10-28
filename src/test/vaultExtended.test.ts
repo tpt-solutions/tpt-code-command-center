@@ -79,3 +79,27 @@ test('isSafeRegex: nested quantifier patterns are rejected', () => {
   assert.equal(isSafeRegex('(a+)+b'), false);
   assert.equal(isSafeRegex('[a-z]+'), true);
 });
+
+// The count is the number of (pattern, text block) pairs that changed something, not the number of
+// matches: two AWS keys in one block count once, a second kind of secret in the same block counts again.
+test('redaction count: one per pattern that fired in each text block, and zero when nothing is found', () => {
+  const awsKey = 'AK' + 'IA' + 'ABCDEFGHIJKLMNOP';
+  const stripeKey = 'sk_' + 'live_' + 'abcdefghijklmnopqrstuvwx';
+  const body = {
+    model: 'x',
+    messages: [
+      { role: 'user', content: `first ${awsKey}` },
+      { role: 'user', content: `second ${stripeKey}` },
+      { role: 'user', content: `both ${awsKey} and ${stripeKey}` },
+      { role: 'user', content: 'nothing sensitive here' },
+    ],
+  };
+  const result = runVault(body, []);
+  assert.equal(result.redacted, 1 + 1 + 2 + 0);
+});
+
+test('redaction count: two keys of the same kind in one block count once', () => {
+  const awsKey = 'AK' + 'IA' + 'ABCDEFGHIJKLMNOP';
+  const body = { model: 'x', messages: [{ role: 'user', content: `${awsKey} ${awsKey.replace('ABCD', 'WXYZ')}` }] };
+  assert.equal(runVault(body, []).redacted, 1);
+});
