@@ -7,7 +7,7 @@ import * as path from 'path';
 import { testWorkspace } from './helpers/mock-vscode';
 import {
   parsePolicy, tightenLimit, applyPolicy, readWorkspacePolicy, setTrustedPolicyHashes,
-  applyWorkspacePolicy, markPolicyTrusted, POLICY_FILE,
+  applyWorkspacePolicy, markPolicyTrusted, POLICY_FILE, readPolicyState, describePolicyState,
 } from '../modules/policy';
 import type { TptConfig } from '../utils/config';
 
@@ -98,4 +98,38 @@ test('trust: a changed policy file has a new hash and is not trusted until the u
   const second = readWorkspacePolicy()!;
   assert.notEqual(second.hash, first);
   assert.equal(applyWorkspacePolicy(config()).dryRun, false, 'the changed file is not applied until trusted');
+});
+
+test('state: no file, a broken file and a loaded file are told apart', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tpt-policy-state-'));
+  testWorkspace.workspaceFolders = [{ uri: { fsPath: dir } }];
+  const file = path.join(dir, POLICY_FILE);
+  assert.equal(readPolicyState().kind, 'none');
+
+  fs.writeFileSync(file, '{ not json');
+  assert.equal(readPolicyState().kind, 'broken', 'invalid JSON is broken');
+  assert.equal(readWorkspacePolicy(), undefined, 'a broken file is never applied');
+
+  fs.writeFileSync(file, JSON.stringify([1, 2]));
+  assert.equal(readPolicyState().kind, 'broken', 'a non-object top level is broken');
+
+  fs.writeFileSync(file, JSON.stringify({ dryRun: true }));
+  assert.equal(readPolicyState().kind, 'loaded');
+});
+
+test('describe: an untrusted policy says it is not applied; a broken one says it is ignored', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tpt-policy-describe-'));
+  testWorkspace.workspaceFolders = [{ uri: { fsPath: dir } }];
+  fs.writeFileSync(path.join(dir, POLICY_FILE), JSON.stringify({ dryRun: true, costBudget: { dailyLimitUsd: 2 } }));
+  const state = readPolicyState();
+
+  const untrusted = describePolicyState(state, false).join('\n');
+  assert.match(untrusted, /Trusted: no/);
+  assert.match(untrusted, /Daily budget: 2/);
+  assert.match(untrusted, /Monthly budget: not set/);
+  assert.match(untrusted, /Dry run: on/);
+
+  assert.match(describePolicyState(state, true).join('\n'), /Trusted: yes/);
+  assert.match(describePolicyState({ kind: 'broken', file: 'x' }, false).join('\n'), /ignored/);
+  assert.match(describePolicyState({ kind: 'none' }, false).join('\n'), /Nothing is applied/);
 });

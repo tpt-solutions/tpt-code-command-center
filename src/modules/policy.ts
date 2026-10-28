@@ -70,12 +70,18 @@ export function applyPolicy(config: TptConfig, policy: WorkspacePolicy): TptConf
   };
 }
 
-// The policy file in the first workspace folder, read again only when it changes on disk
-let cache: { file: string; mtimeMs: number; size: number; loaded?: LoadedPolicy } | undefined;
+// What the policy file in the workspace root is: absent, unreadable (ignored, with a warning), or loaded
+export type PolicyState =
+  | { kind: 'none' }
+  | { kind: 'broken'; file: string }
+  | { kind: 'loaded'; file: string; loaded: LoadedPolicy };
 
-export function readWorkspacePolicy(): LoadedPolicy | undefined {
+// The policy file in the first workspace folder, read again only when it changes on disk
+let cache: { file: string; mtimeMs: number; size: number; state: PolicyState } | undefined;
+
+export function readPolicyState(): PolicyState {
   const folders = vscode.workspace.workspaceFolders;
-  if (!folders?.length) return undefined;
+  if (!folders?.length) return { kind: 'none' };
   const file = path.join(folders[0].uri.fsPath, POLICY_FILE);
 
   let stat: fs.Stats;
@@ -83,22 +89,55 @@ export function readWorkspacePolicy(): LoadedPolicy | undefined {
     stat = fs.statSync(file);
   } catch {
     cache = undefined;
-    return undefined;
+    return { kind: 'none' };
   }
   if (cache && cache.file === file && cache.mtimeMs === stat.mtimeMs && cache.size === stat.size) {
-    return cache.loaded;
+    return cache.state;
   }
 
-  let loaded: LoadedPolicy | undefined;
+  let state: PolicyState;
   try {
     const bytes = fs.readFileSync(file);
     const policy = parsePolicy(JSON.parse(bytes.toString('utf8')));
-    if (policy) loaded = { policy, hash: crypto.createHash('sha256').update(bytes).digest('hex') };
+    state = policy
+      ? { kind: 'loaded', file, loaded: { policy, hash: crypto.createHash('sha256').update(bytes).digest('hex') } }
+      : { kind: 'broken', file };
   } catch {
-    loaded = undefined; // a broken policy file is ignored, and a warning is shown at activation
+    state = { kind: 'broken', file }; // ignored: the settings apply as if there were no policy
   }
-  cache = { file, mtimeMs: stat.mtimeMs, size: stat.size, loaded };
-  return loaded;
+  cache = { file, mtimeMs: stat.mtimeMs, size: stat.size, state };
+  return state;
+}
+
+export function readWorkspacePolicy(): LoadedPolicy | undefined {
+  const state = readPolicyState();
+  return state.kind === 'loaded' ? state.loaded : undefined;
+}
+
+// Plain-language lines for TPT: Show Workspace Policy. Pure, so the wording is tested.
+export function describePolicyState(state: PolicyState, trusted: boolean): string[] {
+  if (state.kind === 'none') {
+    return [`No ${POLICY_FILE} in the workspace root. Nothing is applied from a policy.`];
+  }
+  if (state.kind === 'broken') {
+    return [
+      `${state.file} could not be read: it is not valid JSON, or its top level is not an object.`,
+      'It is ignored, and the settings apply as if there were no policy.',
+    ];
+  }
+  const { policy, hash } = state.loaded;
+  const lines = [
+    `${state.file} found (sha256 ${hash.slice(0, 12)}…).`,
+    trusted
+      ? 'Trusted: yes. The policy below is applied to every request.'
+      : 'Trusted: no. The policy below is NOT applied until you trust this file (the next activation asks).',
+  ];
+  const patterns = policy.vault?.customRegex?.length ?? 0;
+  lines.push(`  Vault patterns added: ${patterns}`);
+  lines.push(`  Daily budget: ${policy.costBudget?.dailyLimitUsd ?? 'not set'}`);
+  lines.push(`  Monthly budget: ${policy.costBudget?.monthlyLimitUsd ?? 'not set'}`);
+  lines.push(`  Dry run: ${policy.dryRun === true ? 'on' : 'not set'}`);
+  return lines;
 }
 
 // Hashes of the policy files the user has trusted, loaded from global state at activation
