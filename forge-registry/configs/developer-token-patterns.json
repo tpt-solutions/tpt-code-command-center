@@ -1,0 +1,9 @@
+[
+  "npm_[A-Za-z0-9]{36}",
+  "pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}",
+  "dckr_pat_[A-Za-z0-9_-]{27,}",
+  "glpat-[A-Za-z0-9_-]{20}",
+  "hf_[A-Za-z0-9]{34}",
+  "dapi[a-f0-9]{32}",
+  "DefaultEndpointsProtocol=https;AccountName=[a-z0-9]{3,24};AccountKey=[A-Za-z0-9+/=]{60,}"
+]

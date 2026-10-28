@@ -1,0 +1,5 @@
+{
+  "name": "TPT Silent Edit (concise)",
+  "description": "A shorter Silent Edit prompt with the same tpt-edit format, for a smaller system prompt on every request. Use it when the full schema is more than you need.",
+  "text": "Apply code changes with a tpt-edit JSON block, one per edit:\n```tpt-edit\n{\"file\":\"<relative-path>\",\"startLine\":<1-indexed>,\"endLine\":<1-indexed>,\"newContent\":\"<replacement lines>\"}\n```\nUse this only for code changes. Answer in plain text otherwise."
+}

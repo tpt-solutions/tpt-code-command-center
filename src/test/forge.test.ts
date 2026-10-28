@@ -2,7 +2,7 @@ import './helpers/mock-vscode'; // must be first — stubs vscode before any mod
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as crypto from 'crypto';
-import { collectInstalledForge, parseEnvelope, verifyForgePin } from '../modules/forge';
+import { collectInstalledForge, parseEnvelope, verifyForgePin, mergeForgeEntries, isUnpinned, ForgeEntry } from '../modules/forge';
 
 const body = Buffer.from('{"rules":[]}');
 const digest = crypto.createHash('sha256').update(body).digest('hex');
@@ -57,4 +57,27 @@ test('forge install: content of the wrong shape for its type is ignored', () => 
     { name: 's', type: 'system-prompt', version: '1', content: null },
   ]);
   assert.deepEqual(forge, { routerRules: [], vaultPatterns: [] });
+});
+
+const builtin = (name: string): ForgeEntry => ({ name, description: 'built-in', type: 'vault-pattern', url: '', version: '1.0.0', localContent: [] });
+const remote = (name: string, sha256?: string): ForgeEntry => ({
+  name, description: 'remote', type: 'vault-pattern', url: `https://example.com/${name}.json`, version: '2.0.0', ...(sha256 ? { sha256 } : {}),
+});
+
+test('forge merge: a pinned remote entry replaces the built-in of the same name', () => {
+  const merged = mergeForgeEntries([builtin('a')], [remote('a', 'f'.repeat(64))]);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].version, '2.0.0');
+});
+
+test('forge merge: an unpinned remote entry cannot replace a built-in, and a new name is still added', () => {
+  const merged = mergeForgeEntries([builtin('a')], [remote('a'), remote('b')]);
+  assert.equal(merged.find((e) => e.name === 'a')?.version, '1.0.0');
+  assert.ok(merged.some((e) => e.name === 'b'));
+});
+
+test('forge unpinned: a remote file without a pin is flagged; built-in content and pinned files are not', () => {
+  assert.equal(isUnpinned(remote('x')), true);
+  assert.equal(isUnpinned(remote('x', 'a'.repeat(64))), false);
+  assert.equal(isUnpinned(builtin('x')), false);
 });

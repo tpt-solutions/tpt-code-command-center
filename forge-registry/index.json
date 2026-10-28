@@ -23,6 +23,22 @@
       "url": "https://raw.githubusercontent.com/tpt-solutions/tpt-code-command-center/master/forge-registry/configs/silent-edit-system-prompt.json",
       "version": "1.0.0",
       "sha256": "3131f3db914b68814190301ef1a877ea6dbe591cbfce2b65df1e00cb8a28aab2"
+    },
+    {
+      "name": "developer-token-patterns",
+      "description": "Vault patterns for developer and cloud tokens: npm, PyPI, Docker Hub, GitLab, Hugging Face, Databricks and Azure Storage connection strings",
+      "type": "vault-pattern",
+      "url": "https://raw.githubusercontent.com/tpt-solutions/tpt-code-command-center/master/forge-registry/configs/developer-token-patterns.json",
+      "version": "1.0.0",
+      "sha256": "22a8d8ddc9c73dd8184a94c9c6c955aa498d2f9c1c60dabdf2e68038b555d452"
+    },
+    {
+      "name": "silent-edit-concise",
+      "description": "A shorter Silent Edit system prompt with the same tpt-edit format, for a smaller prompt on every request",
+      "type": "system-prompt",
+      "url": "https://raw.githubusercontent.com/tpt-solutions/tpt-code-command-center/master/forge-registry/configs/silent-edit-concise.json",
+      "version": "1.0.0",
+      "sha256": "85ba57b20ce4ce9d148df0f3ab222f30332cf37f1516fa215224f422d7539228"
     }
   ]
 }

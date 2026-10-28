@@ -217,11 +217,24 @@ export async function fetchForgeIndex(): Promise<ForgeEntry[]> {
     log(`Forge: registry unreachable (${registryUrl}) — using built-in entries. ${e}`);
   }
 
-  // Merge: remote entries win on name collision
+  return mergeForgeEntries(BUILTIN_FORGE_ENTRIES, remoteEntries);
+}
+
+// An unpinned remote entry has no integrity check, so it cannot replace a built-in of the same name.
+// Pinned remote entries replace built-ins, which is how an updated config reaches users.
+export function mergeForgeEntries(builtins: ForgeEntry[], remote: ForgeEntry[]): ForgeEntry[] {
   const merged = new Map<string, ForgeEntry>();
-  for (const entry of BUILTIN_FORGE_ENTRIES) merged.set(entry.name, entry);
-  for (const entry of remoteEntries) merged.set(entry.name, entry);
+  for (const entry of builtins) merged.set(entry.name, entry);
+  for (const entry of remote) {
+    if (merged.has(entry.name) && !entry.sha256) continue;
+    merged.set(entry.name, entry);
+  }
   return [...merged.values()];
+}
+
+// A remote file with no pin: TPT cannot check the bytes it downloads. Built-in entries are not remote.
+export function isUnpinned(entry: ForgeEntry): boolean {
+  return entry.localContent === undefined && !entry.sha256;
 }
 
 // Registry data is untrusted: an entry must name a known type and a string name and version.
@@ -274,6 +287,11 @@ export async function refreshInstalledForge(): Promise<number> {
   let refreshed = 0;
   for (const entry of await fetchForgeIndex()) {
     if (!installed.has(entry.name)) continue;
+    // Background refresh never installs a file it cannot check; the user installs those by hand
+    if (isUnpinned(entry)) {
+      log(`Forge: ${entry.name} is not pinned, so it was not refreshed in the background`);
+      continue;
+    }
     if (await installForgeEntry(entry)) refreshed++;
   }
   return refreshed;
@@ -293,6 +311,15 @@ export async function browseForge(): Promise<void> {
   );
 
   if (!picked) return;
+
+  if (isUnpinned(picked.entry)) {
+    const choice = await vscode.window.showWarningMessage(
+      `"${picked.entry.name}" has no sha256 pin, so TPT cannot check the file it downloads. Only install it if you trust its source.`,
+      { modal: true },
+      'Install anyway'
+    );
+    if (choice !== 'Install anyway') return;
+  }
 
   const ok = await installForgeEntry(picked.entry);
   if (ok) {
